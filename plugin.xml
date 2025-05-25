@@ -1,37 +1,78 @@
 <?xml version='1.0' encoding='UTF-8'?>
-<plugin xmlns="http://apache.org/cordova/ns/plugins/1.0" id="cordova-plugin-iroot" version="0.6.1">
-    <name>iRoot</name>
-    <author>Wuglyak Bolgoink (info@cyberkatze.de)</author>
-    <description>Cordova Jailbreak/Root Detection Plugin</description>
-    <keywords>cordova, jailbreak, jailbroken, cydia, detection, detector, root, rooted, rootBeer, android, ios, check</keywords>
+<plugin id="cordova-plugin-iroot" version="4.0.0" xmlns="http://apache.org/cordova/ns/plugins/1.0" xmlns:android="http://schemas.android.com/apk/res/android">
+    <name>EnhancedIRoot</name>
+    <author>Elderov Ali (github.wuglyakbolgoink@gmail.com)</author>
+
+    <description>Enhanced Runtime Application Self-Protection (RASP) Plugin for Apache Cordova</description>
+    <keywords>cordova,jailbreak,jailbroken,cydia,detection,detector,root,rooted,rootBeer,android,ios,iroot,plugin,rasp,security</keywords>
+
     <license>MIT</license>
+
     <repo>https://github.com/WuglyakBolgoink/cordova-plugin-iroot</repo>
     <issue>https://github.com/WuglyakBolgoink/cordova-plugin-iroot/issues</issue>
+
     <engines>
-        <engine name="cordova" version=">=3.0.0" />
+        <engine name="cordova" version=">=10.0.0"/>
+        <engine name="cordova-android" version=">=9.0.0" />
+        <engine name="cordova-ios" version=">=6.0.0" />
     </engines>
-    <js-module src="www/iroot.js" name="IRoot">
-        <clobbers target="IRoot" />
+
+    <js-module name="IRoot" src="www/iroot.js">
+        <clobbers target="IRoot"/>
     </js-module>
+
+    <js-module name="EnhancedIRoot" src="www/enhancedRoot.js">
+        <clobbers target="EnhancedIRoot"/>
+    </js-module>
+
     <platform name="ios">
-        <config-file target="config.xml" parent="/*">
-            <feature name="IRoot">
-                <param name="ios-package" value="IRoot" />
-                <param name="onload" value="true" />
-            </feature>
-        </config-file>
-        <header-file src="src/ios/IRoot.h" />
-        <source-file src="src/ios/IRoot.m" />
-    </platform>
-    <platform name="android">
-        <config-file parent="/*" target="res/xml/config.xml">
-            <feature name="IRoot">
-                <param name="android-package" value="de.cyberkatze.iroot.IRoot"/>
+        <config-file parent="/*" target="config.xml">
+            <feature name="EnhancedIRoot">
+                <param name="ios-package" value="EnhancedIRoot"/>
                 <param name="onload" value="true"/>
             </feature>
         </config-file>
-        <config-file parent="/*" target="AndroidManifest.xml"></config-file>
-        <source-file src="src/android/IRoot.java" target-dir="src/de/cyberkatze/iroot"/>
-        <framework src="src/android/build-extras.gradle" custom="true" type="gradleReference" />
+
+        <header-file src="src/ios/EnhancedIRoot.h"/>
+
+        <source-file src="src/ios/EnhancedIRoot.m"/>
+        
+        <config-file parent="NSAppTransportSecurity" target="*-Info.plist">
+            <key>NSAllowsArbitraryLoads</key>
+            <true/>
+        </config-file>
     </platform>
+
+    <platform name="android">
+        <config-file parent="/*" target="res/xml/config.xml">
+            <feature name="EnhancedIRoot">
+                <param name="android-package" value="de.cyberkatze.iroot.EnhancedIRoot"/>
+                <param name="onload" value="true"/>
+            </feature>
+        </config-file>
+
+        <config-file parent="/*" target="AndroidManifest.xml">
+            <uses-permission android:name="android.permission.INTERNET" />
+            <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+            <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" />
+            <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" />
+            <uses-permission android:name="android.permission.QUERY_ALL_PACKAGES" />
+        </config-file>
+
+        <source-file src="src/android/de/cyberkatze/iroot/Constants.java" target-dir="src/de/cyberkatze/iroot"/>
+        <source-file src="src/android/de/cyberkatze/iroot/CordovaActions.java" target-dir="src/de/cyberkatze/iroot"/>
+        <source-file src="src/android/de/cyberkatze/iroot/InternalRootDetection.java" target-dir="src/de/cyberkatze/iroot"/>
+        <source-file src="src/android/de/cyberkatze/iroot/IRoot.java" target-dir="src/de/cyberkatze/iroot"/>
+        <source-file src="src/android/de/cyberkatze/iroot/Utils.java" target-dir="src/de/cyberkatze/iroot"/>
+
+        <source-file src="src/android/de/cyberkatze/iroot/EnhancedIRoot.java" target-dir="src/de/cyberkatze/iroot"/>
+        <source-file src="src/android/de/cyberkatze/iroot/DeviceIntegrityChecker.java" target-dir="src/de/cyberkatze/iroot"/>
+        <source-file src="src/android/de/cyberkatze/iroot/HookingFrameworkDetector.java" target-dir="src/de/cyberkatze/iroot"/>
+        <source-file src="src/android/de/cyberkatze/iroot/DebuggerDetector.java" target-dir="src/de/cyberkatze/iroot"/>
+        <source-file src="src/android/de/cyberkatze/iroot/EmulatorDetector.java" target-dir="src/de/cyberkatze/iroot"/>
+        <source-file src="src/android/de/cyberkatze/iroot/AppIntegrityChecker.java" target-dir="src/de/cyberkatze/iroot"/>
+
+        <framework custom="true" src="src/android/build-extras.gradle" type="gradleReference"/>
+    </platform>
+
 </plugin>

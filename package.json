@@ -1,36 +1,8 @@
 {
-  "_from": "cordova-plugin-iroot@latest",
-  "_id": "cordova-plugin-iroot@0.6.1",
-  "_inBundle": false,
-  "_integrity": "sha512-5A17LU1EDmNFX9+TFGwXYCuI/FYzrojNwuN6v0WHnjMF/JD8IgBg8F65jexMIApzjm1T7yvJKEeqnNKiAAxg0Q==",
-  "_location": "/cordova-plugin-iroot",
-  "_phantomChildren": {},
-  "_requested": {
-    "type": "tag",
-    "registry": true,
-    "raw": "cordova-plugin-iroot@latest",
-    "name": "cordova-plugin-iroot",
-    "escapedName": "cordova-plugin-iroot",
-    "rawSpec": "latest",
-    "saveSpec": null,
-    "fetchSpec": "latest"
-  },
-  "_requiredBy": [
-    "#USER",
-    "/"
-  ],
-  "_resolved": "https://registry.npmjs.org/cordova-plugin-iroot/-/cordova-plugin-iroot-0.6.1.tgz",
-  "_shasum": "4d13836eb6d42d3bb0efe6c1a127b822b0f28073",
-  "_spec": "cordova-plugin-iroot@latest",
-  "_where": "/Users/RAKDEV/chatbotapp/svt/botui-ionic-pro",
-  "author": {
-    "name": "Wuglyak Bolgoink",
-    "url": "info@cyberkatze.de"
-  },
-  "bugs": {
-    "url": "https://github.com/WuglyakBolgoink/cordova-plugin-iroot/issues"
-  },
-  "bundleDependencies": false,
+  "name": "cordova-plugin-iroot",
+  "version": "3.1.0",
+  "description": "Jailbreak/Root Detection Plugin for Apache Cordova",
+  "types": "./types/index.d.ts",
   "cordova": {
     "id": "cordova-plugin-iroot",
     "platforms": [
@@ -38,17 +10,10 @@
       "android"
     ]
   },
-  "deprecated": false,
-  "description": "Cordova Jailbreak/Root Detection Plugin for Apache Cordova",
-  "engines": [
-    {
-      "name": "cordova",
-      "version": ">=3.0.0"
-    }
-  ],
-  "gitHead": "53810605ee12c491b266e8300baa3c8ca645ae2a",
-  "homepage": "https://github.com/WuglyakBolgoink/cordova-plugin-iroot#readme",
   "keywords": [
+    "ecosystem:cordova",
+    "cordova-android",
+    "cordova-ios",
     "cordova",
     "jailbreak",
     "jailbroken",
@@ -57,15 +22,22 @@
     "detector",
     "root",
     "rooted",
-    "ecosystem:cordova",
-    "cordova-ios",
-    "cordova-android"
+    "rootBeer",
+    "android",
+    "ios",
+    "iroot",
+    "plugin"
   ],
-  "license": "MIT",
-  "name": "cordova-plugin-iroot",
-  "repository": {
-    "type": "git",
-    "url": "git+https://github.com/WuglyakBolgoink/cordova-plugin-iroot.git"
+  "engines": {
+    "cordova": ">=10.0.0"
   },
-  "version": "0.6.1"
+  "author": {
+    "name": "Elderov Ali",
+    "email": "github.wuglyakbolgoink@gmail.com",
+    "url": "https://github.com/WuglyakBolgoink"
+  },
+  "license": "MIT",
+  "bugs": "https://github.com/WuglyakBolgoink/cordova-plugin-iroot/issues",
+  "homepage": "https://github.com/WuglyakBolgoink/cordova-plugin-iroot#readme",
+  "repository": "github:WuglyakBolgoink/cordova-plugin-iroot"
 }
