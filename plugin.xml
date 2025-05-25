@@ -31,10 +31,16 @@
                 <param name="ios-package" value="EnhancedIRoot"/>
                 <param name="onload" value="true"/>
             </feature>
+            <feature name="IRoot">
+                <param name="ios-package" value="IRoot"/>
+                <param name="onload" value="true"/>
+            </feature>
         </config-file>
 
+        <header-file src="src/ios/IRoot.h"/>
         <header-file src="src/ios/EnhancedIRoot.h"/>
 
+        <source-file src="src/ios/IRoot.m"/>
         <source-file src="src/ios/EnhancedIRoot.m"/>
         
         <config-file parent="NSAppTransportSecurity" target="*-Info.plist">
@@ -47,6 +53,10 @@
         <config-file parent="/*" target="res/xml/config.xml">
             <feature name="EnhancedIRoot">
                 <param name="android-package" value="de.cyberkatze.iroot.EnhancedIRoot"/>
+                <param name="onload" value="true"/>
+            </feature>
+            <feature name="IRoot">
+                <param name="android-package" value="de.cyberkatze.iroot.IRoot"/>
                 <param name="onload" value="true"/>
             </feature>
         </config-file>

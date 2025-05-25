@@ -171,9 +171,9 @@ public class HookingFrameworkDetector {
 
     private boolean checkFrida() {
         // Verify code integrity first
-        if (!verifyIntegrity() || !checkNativeIntegrity()) {
-            return true; // Integrity check failed, assume tampering
-        }
+        // if (!verifyIntegrity() || !checkNativeIntegrity()) {
+        //     return true; // Integrity check failed, assume tampering
+        // }
 
         // Add timing-based checks
         long startTime = System.nanoTime();
