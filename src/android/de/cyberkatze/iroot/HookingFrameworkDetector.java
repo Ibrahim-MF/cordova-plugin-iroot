@@ -594,5 +594,4 @@ public class HookingFrameworkDetector {
         }
         return false;
     }
-} 
-} 
+}
