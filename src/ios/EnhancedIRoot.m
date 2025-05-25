@@ -264,10 +264,11 @@
         
         @try {
             NSMutableDictionary* report = [NSMutableDictionary dictionary];
-            [report addEntriesFromDictionary:[self checkJailbreak]];
-            [report addEntriesFromDictionary:[self checkHookingFrameworks]];
-            [report addEntriesFromDictionary:[self checkDebugger]];
-            [report addEntriesFromDictionary:[self checkAppIntegrity]];
+            report[@"deviceIntegrity"] = [self checkJailbreak];
+            report[@"hookingFrameworks"] = [self checkHookingFrameworks];
+            report[@"debugger"] = [self checkDebugger];
+            report[@"emulator"] = [self checkEmulator];
+            report[@"appIntegrity"] = [self checkAppIntegrity];
             
             pluginResult = [CDVPluginResult resultWithStatus:CDVCommandStatus_OK messageAsDictionary:report];
         } @catch (NSException* exception) {
@@ -306,6 +307,14 @@
                 [self sendEventToJS:@"debuggerDetected" withData:debuggerCheck];
             }
             report[@"debugger"] = debuggerCheck;
+        }
+
+        if (!self.enabledChecks || [self.enabledChecks[@"checkEmulator"] boolValue]) {
+            NSDictionary* emulatorCheck = [self checkEmulator];
+            if ([emulatorCheck[@"isEmulator"] boolValue]) {
+                [self sendEventToJS:@"emulatorDetected" withData:emulatorCheck];
+            }
+            report[@"emulator"] = emulatorCheck;
         }
         
         if (!self.enabledChecks || [self.enabledChecks[@"checkAppIntegrity"] boolValue]) {
@@ -470,6 +479,55 @@
     }
     
     result[@"isTampered"] = @(isTampered);
+    result[@"detectedIssues"] = detectedIssues;
+    return result;
+}
+
+- (NSDictionary*)checkEmulator {
+    NSMutableDictionary* result = [NSMutableDictionary dictionary];
+    NSMutableArray* detectedIssues = [NSMutableArray array];
+    BOOL isEmulator = NO;
+    
+    // Check for simulator environment
+    #if TARGET_IPHONE_SIMULATOR
+    isEmulator = YES;
+    [detectedIssues addObject:@"simulator_environment"];
+    #endif
+    
+    // Check for common emulator artifacts
+    NSArray* emulatorPaths = @[
+        @"/Applications/Xcode.app",
+        @"/Applications/Xcode-beta.app",
+        @"/Applications/Xcode.app/Contents/Developer/Platforms/iPhoneSimulator.platform",
+        @"/Applications/Xcode.app/Contents/Developer/Platforms/iPhoneSimulator.platform/Developer/SDKs"
+    ];
+    
+    for (NSString* path in emulatorPaths) {
+        if ([[NSFileManager defaultManager] fileExistsAtPath:path]) {
+            isEmulator = YES;
+            [detectedIssues addObject:@"emulator_artifacts_found"];
+            break;
+        }
+    }
+    
+    // Check for simulator-specific environment variables
+    if (getenv("SIMULATOR_DEVICE_NAME") != NULL ||
+        getenv("SIMULATOR_RUNTIME_VERSION") != NULL ||
+        getenv("SIMULATOR_DEVICE_FAMILY") != NULL) {
+        isEmulator = YES;
+        [detectedIssues addObject:@"simulator_environment_variables"];
+    }
+    
+    // Check for simulator-specific hardware
+    struct utsname systemInfo;
+    uname(&systemInfo);
+    NSString* deviceModel = @(systemInfo.machine);
+    if ([deviceModel hasPrefix:@"x86_64"] || [deviceModel hasPrefix:@"i386"]) {
+        isEmulator = YES;
+        [detectedIssues addObject:@"simulator_hardware"];
+    }
+    
+    result[@"isEmulator"] = @(isEmulator);
     result[@"detectedIssues"] = detectedIssues;
     return result;
 }
