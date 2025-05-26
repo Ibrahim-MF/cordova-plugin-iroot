@@ -14,7 +14,7 @@
 #include <sys/socket.h>
 #include <mach-o/dyld.h>
 #include <sys/types.h>
-#include <sys/ptrace.h>
+// #include <sys/ptrace.h>
 
 
 
