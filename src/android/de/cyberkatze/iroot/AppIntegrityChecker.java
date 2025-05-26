@@ -62,10 +62,10 @@ public class AppIntegrityChecker {
         }
 
         // Check for suspicious modifications
-        if (checkSuspiciousModifications()) {
-            isTampered = true;
-            detectedIssues.add("suspicious_modifications");
-        }
+        // if (checkSuspiciousModifications()) {
+        //     isTampered = true;
+        //     detectedIssues.add("suspicious_modifications");
+        // }
 
         result.put("isTampered", isTampered);
         result.put("detectedIssues", new JSONArray(detectedIssues));
