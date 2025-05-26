@@ -259,7 +259,7 @@ public class HookingFrameworkDetector {
         long duration = endTime - startTime;
         
         // If checks took too long, might indicate debugging
-        if (duration > 100000000) { // 100ms
+        if (duration > 2000000000) { // 2 sec
             return true;
         }
         
