@@ -10,6 +10,12 @@
 #import <Foundation/Foundation.h>
 #import <Security/Security.h>
 #import <CommonCrypto/CommonCrypto.h>
+#import <mach/mach.h>
+#import <mach/vm_map.h>
+#import <sys/socket.h>
+#import <netinet/in.h>
+#import <arpa/inet.h>
+#import <math.h>
 
 @interface EnhancedIRoot ()
 
@@ -461,10 +467,10 @@
     BOOL isTampered = NO;
     
     // Check for code signature
-    if (![self checkCodeSignature]) {
-        isTampered = YES;
-        [detectedIssues addObject:@"code_signature_invalid"];
-    }
+//    if (![self checkCodeSignature]) {
+//        isTampered = YES;
+//        [detectedIssues addObject:@"code_signature_invalid"];
+//    }
     
     // Check for suspicious modifications
     if ([self checkSuspiciousModifications]) {
@@ -473,10 +479,10 @@
     }
     
     // Check for suspicious entitlements
-    if ([self checkSuspiciousEntitlements]) {
-        isTampered = YES;
-        [detectedIssues addObject:@"suspicious_entitlements"];
-    }
+//    if ([self checkSuspiciousEntitlements]) {
+//        isTampered = YES;
+//        [detectedIssues addObject:@"suspicious_entitlements"];
+//    }
     
     result[@"isTampered"] = @(isTampered);
     result[@"detectedIssues"] = detectedIssues;
@@ -571,8 +577,22 @@
 }
 
 - (BOOL)checkFridaInternal {
-    // Move existing Frida checks here
-    // ... existing code ...
+    // Check for Frida environment variables
+    if ([self checkFridaEnvironment]) {
+        return YES;
+    }
+    
+    // Check for Frida processes
+    if ([self checkFridaProcesses]) {
+        return YES;
+    }
+    
+    // Check for Frida artifacts
+    if ([self checkFridaArtifacts]) {
+        return YES;
+    }
+    
+    return NO;
 }
 
 - (BOOL)verifyIntegrity {
@@ -609,8 +629,8 @@
     
     while (vm_region_64(mach_task_self(), &address, &size, VM_REGION_BASIC_INFO_64, (vm_region_info_t)&info, &info_count, &object_name) == KERN_SUCCESS) {
         // Check for suspicious memory patterns
-        if ((info.protection & VM_PROT_READ) && 
-            (info.protection & VM_PROT_WRITE) && 
+        if ((info.protection & VM_PROT_READ) &&
+            (info.protection & VM_PROT_WRITE) &&
             (info.protection & VM_PROT_EXECUTE)) {
             return NO;
         }
@@ -757,38 +777,44 @@
 }
 
 - (BOOL)checkDebuggerPtrace {
-    return ptrace(PT_DENY_ATTACH, 0, 0, 0) == -1;
+    #if !(TARGET_IPHONE_SIMULATOR)
+        // Use syscall instead of direct ptrace
+        return syscall(SYS_ptrace, 31, 0, 0, 0) == -1;
+    #else
+        return NO;
+    #endif
 }
 
 - (BOOL)checkDebuggerTiming {
     NSTimeInterval start = [NSDate date].timeIntervalSince1970;
     for (int i = 0; i < 1000; i++) {
-        sin(i);
+        double result = sin(i); // Store the result to avoid warning
+        (void)result; // Explicitly ignore the result
     }
     NSTimeInterval end = [NSDate date].timeIntervalSince1970;
     
     return (end - start) > 0.1;
 }
 
-- (BOOL)checkCodeSignature {
-    SecCodeRef codeRef = NULL;
-    SecStaticCodeRef staticCodeRef = NULL;
-    
-    if (SecCodeCopySelf(kSecCSDefaultFlags, &codeRef) == errSecSuccess) {
-        if (SecCodeCopyStaticCode(codeRef, kSecCSDefaultFlags, &staticCodeRef) == errSecSuccess) {
-            SecCSFlags flags = kSecCSDefaultFlags;
-            OSStatus status = SecCodeCheckValidity(staticCodeRef, flags, NULL);
-            
-            if (staticCodeRef) CFRelease(staticCodeRef);
-            if (codeRef) CFRelease(codeRef);
-            
-            return status == errSecSuccess;
-        }
-        if (codeRef) CFRelease(codeRef);
-    }
-    
-    return NO;
-}
+//- (BOOL)checkCodeSignature {
+//    SecCodeRef codeRef = NULL;
+//    SecStaticCodeRef staticCodeRef = NULL;
+//    
+//    if (SecCodeCopySelf(kSecCSDefaultFlags, &codeRef) == errSecSuccess) {
+//        if (SecCodeCopyStaticCode(codeRef, kSecCSDefaultFlags, &staticCodeRef) == errSecSuccess) {
+//            SecCSFlags flags = kSecCSDefaultFlags;
+//            OSStatus status = SecCodeCheckValidity(staticCodeRef, flags, NULL);
+//            
+//            if (staticCodeRef) CFRelease(staticCodeRef);
+//            if (codeRef) CFRelease(codeRef);
+//            
+//            return status == errSecSuccess;
+//        }
+//        if (codeRef) CFRelease(codeRef);
+//    }
+//    
+//    return NO;
+//}
 
 - (BOOL)checkSuspiciousModifications {
     NSString* bundlePath = [[NSBundle mainBundle] bundlePath];
@@ -806,41 +832,41 @@
     
     return NO;
 }
-
-- (BOOL)checkSuspiciousEntitlements {
-    SecCodeRef codeRef = NULL;
-    SecStaticCodeRef staticCodeRef = NULL;
-    
-    if (SecCodeCopySelf(kSecCSDefaultFlags, &codeRef) == errSecSuccess) {
-        if (SecCodeCopyStaticCode(codeRef, kSecCSDefaultFlags, &staticCodeRef) == errSecSuccess) {
-            CFDictionaryRef entitlements = NULL;
-            if (SecCodeCopyEntitlements(staticCodeRef, kSecCSDefaultFlags, &entitlements) == errSecSuccess) {
-                NSDictionary* dict = (__bridge_transfer NSDictionary*)entitlements;
-                
-                // Check for suspicious entitlements
-                NSArray* suspiciousEntitlements = @[
-                    @"com.apple.developer.kernel.increased-memory-limit",
-                    @"com.apple.developer.kernel.extended-virtual-addressing",
-                    @"com.apple.developer.kernel.kext-user-access",
-                    @"com.apple.developer.kernel.kext-user-access-allowed"
-                ];
-                
-                for (NSString* entitlement in suspiciousEntitlements) {
-                    if (dict[entitlement]) {
-                        if (staticCodeRef) CFRelease(staticCodeRef);
-                        if (codeRef) CFRelease(codeRef);
-                        return YES;
-                    }
-                }
-            }
-            
-            if (staticCodeRef) CFRelease(staticCodeRef);
-        }
-        if (codeRef) CFRelease(codeRef);
-    }
-    
-    return NO;
-}
+//
+//- (BOOL)checkSuspiciousEntitlements {
+//    SecCodeRef codeRef = NULL;
+//    SecStaticCodeRef staticCodeRef = NULL;
+//    
+//    if (SecCodeCopySelf(kSecCSDefaultFlags, &codeRef) == errSecSuccess) {
+//        if (SecCodeCopyStaticCode(codeRef, kSecCSDefaultFlags, &staticCodeRef) == errSecSuccess) {
+//            CFDictionaryRef entitlements = NULL;
+//            if (SecCodeCopyEntitlements(staticCodeRef, kSecCSDefaultFlags, &entitlements) == errSecSuccess) {
+//                NSDictionary* dict = (__bridge_transfer NSDictionary*)entitlements;
+//                
+//                // Check for suspicious entitlements
+//                NSArray* suspiciousEntitlements = @[
+//                    @"com.apple.developer.kernel.increased-memory-limit",
+//                    @"com.apple.developer.kernel.extended-virtual-addressing",
+//                    @"com.apple.developer.kernel.kext-user-access",
+//                    @"com.apple.developer.kernel.kext-user-access-allowed"
+//                ];
+//                
+//                for (NSString* entitlement in suspiciousEntitlements) {
+//                    if (dict[entitlement]) {
+//                        if (staticCodeRef) CFRelease(staticCodeRef);
+//                        if (codeRef) CFRelease(codeRef);
+//                        return YES;
+//                    }
+//                }
+//            }
+//            
+//            if (staticCodeRef) CFRelease(staticCodeRef);
+//        }
+//        if (codeRef) CFRelease(codeRef);
+//    }
+//    
+//    return NO;
+//}
 
 - (BOOL)checkFridaEnvironment {
     // Check for Frida-related environment variables
@@ -931,4 +957,4 @@
     return NO;
 }
 
-@end 
+@end
