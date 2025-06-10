@@ -29,6 +29,9 @@ public class HookingFrameworkDetector {
     private final Set<String> fridaPaths;
     private final Set<String> xposedPaths;
     private final Set<Integer> fridaPorts;
+    private final Set<String> objectionPaths;
+    private final Set<String> objectionProcesses;
+    private final Set<Integer> objectionPorts;
 
     private static final byte[] INTEGRITY_KEY = {
         (byte)0x7A, (byte)0x3B, (byte)0x9C, (byte)0x4D,
@@ -87,6 +90,32 @@ public class HookingFrameworkDetector {
         this.fridaPorts = new HashSet<>(Arrays.asList(
             27042, 27043, 27044, 27045, 27046, 27047, 27048, 27049, 27050
         ));
+
+        // Objection paths
+        this.objectionPaths = new HashSet<>(Arrays.asList(
+            "/data/local/tmp/objection",
+            "/data/local/tmp/.objection",
+            "/data/local/tmp/objection-agent",
+            "/data/local/tmp/.objection-agent",
+            "/data/local/tmp/objection-agent.js",
+            "/data/local/tmp/.objection-agent.js",
+            "/data/data/com.android.shell/objection",
+            "/data/data/com.android.shell/.objection"
+        ));
+
+        // Objection processes
+        this.objectionProcesses = new HashSet<>(Arrays.asList(
+            "objection",
+            "objection-agent",
+            "objection-gadget",
+            "objection-js-loop",
+            "objection-main"
+        ));
+
+        // Objection ports
+        this.objectionPorts = new HashSet<>(Arrays.asList(
+            8888, 8889, 8890
+        ));
     }
 
     public JSONObject check() throws JSONException {
@@ -104,6 +133,12 @@ public class HookingFrameworkDetector {
         if (checkXposed()) {
             isHooked = true;
             detectedIssues.add("xposed_detected");
+        }
+
+        // Check for Objection
+        if (checkObjection()) {
+            isHooked = true;
+            detectedIssues.add("objection_detected");
         }
 
         // Check for suspicious processes
@@ -594,4 +629,110 @@ public class HookingFrameworkDetector {
         }
         return false;
     }
-}
+
+    private boolean checkObjection() {
+        // Check for Objection artifacts
+        if (checkObjectionArtifacts()) {
+            return true;
+        }
+
+        // Check for Objection processes
+        if (checkObjectionProcesses()) {
+            return true;
+        }
+
+        // Check for Objection network activity
+        if (checkObjectionNetwork()) {
+            return true;
+        }
+
+        // Check for Objection environment
+        if (checkObjectionEnvironment()) {
+            return true;
+        }
+
+        return false;
+    }
+
+    private boolean checkObjectionArtifacts() {
+        for (String path : objectionPaths) {
+            File file = new File(path);
+            if (file.exists()) {
+                Log.d(TAG, "Found Objection artifact: " + path);
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private boolean checkObjectionProcesses() {
+        try {
+            Process process = Runtime.getRuntime().exec("ps -A");
+            BufferedReader reader = new BufferedReader(new InputStreamReader(process.getInputStream()));
+            String line;
+            while ((line = reader.readLine()) != null) {
+                for (String objectionProcess : objectionProcesses) {
+                    if (line.contains(objectionProcess)) {
+                        Log.d(TAG, "Found Objection process: " + line);
+                        return true;
+                    }
+                }
+            }
+        } catch (Exception e) {
+            Log.e(TAG, "Error checking Objection processes: " + e.getMessage());
+        }
+        return false;
+    }
+
+    private boolean checkObjectionNetwork() {
+        for (int port : objectionPorts) {
+            if (testPortConnection(port)) {
+                Log.d(TAG, "Found Objection network activity on port: " + port);
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private boolean checkObjectionEnvironment() {
+        // Check for Objection-related environment variables
+        String[] envVars = {
+            "OBJECTION_AGENT",
+            "OBJECTION_AGENT_SCRIPT",
+            "OBJECTION_AGENT_SCRIPT_BASE64",
+            "OBJECTION_AGENT_SCRIPT_PATH",
+            "OBJECTION_AGENT_SCRIPT_URL",
+            "OBJECTION_AGENT_SCRIPT_URL_BASE64",
+            "OBJECTION_AGENT_SCRIPT_URL_PATH",
+            "OBJECTION_AGENT_SCRIPT_URL_BASE64_PATH"
+        };
+
+        for (String envVar : envVars) {
+            if (System.getenv(envVar) != null) {
+                Log.d(TAG, "Found Objection environment variable: " + envVar);
+                return true;
+            }
+        }
+
+        // Check for Objection-related system properties
+        String[] sysProps = {
+            "objection.agent",
+            "objection.agent.script",
+            "objection.agent.script.base64",
+            "objection.agent.script.path",
+            "objection.agent.script.url",
+            "objection.agent.script.url.base64",
+            "objection.agent.script.url.path",
+            "objection.agent.script.url.base64.path"
+        };
+
+        for (String prop : sysProps) {
+            if (System.getProperty(prop) != null) {
+                Log.d(TAG, "Found Objection system property: " + prop);
+                return true;
+            }
+        }
+
+        return false;
+    }
+} 

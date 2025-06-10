@@ -25,6 +25,7 @@
 @property (nonatomic, strong) NSArray *jailbreakBinaries;
 @property (nonatomic, strong) NSArray *jailbreakSchemes;
 @property (nonatomic, strong) NSArray *suspiciousLibraries;
+@property (nonatomic, strong) NSArray *objectionArtifacts;
 @property (nonatomic, strong) NSData *integrityChecksum;
 @property (nonatomic, strong) NSTimer *integrityTimer;
 
@@ -122,7 +123,21 @@
         @"substitute",
         @"RevealServer",
         @"libReveal",
-        @"libcycript"
+        @"libcycript",
+        @"libobjection",
+        @"objection"
+    ];
+    
+    // Initialize Objection artifacts
+    self.objectionArtifacts = @[
+        @"/var/root/objection",
+        @"/var/mobile/objection",
+        @"/var/root/.objection",
+        @"/var/mobile/.objection",
+        @"/var/root/.objection-agent",
+        @"/var/mobile/.objection-agent",
+        @"/var/root/.objection-agent.js",
+        @"/var/mobile/.objection-agent.js"
     ];
 }
 
@@ -314,7 +329,7 @@
             }
             report[@"debugger"] = debuggerCheck;
         }
-
+        
         if (!self.enabledChecks || [self.enabledChecks[@"checkEmulator"] boolValue]) {
             NSDictionary* emulatorCheck = [self checkEmulator];
             if ([emulatorCheck[@"isEmulator"] boolValue]) {
@@ -416,6 +431,12 @@
         [detectedIssues addObject:@"frida_detected"];
     }
     
+    // Check for Objection
+    if ([self checkObjection]) {
+        isHooked = YES;
+        [detectedIssues addObject:@"objection_detected"];
+    }
+    
     // Check for Cydia Substrate
     if ([self checkSubstrate]) {
         isHooked = YES;
@@ -482,8 +503,8 @@
 //    if ([self checkSuspiciousEntitlements]) {
 //        isTampered = YES;
 //        [detectedIssues addObject:@"suspicious_entitlements"];
-//    }
-    
+//    }    
+  
     result[@"isTampered"] = @(isTampered);
     result[@"detectedIssues"] = detectedIssues;
     return result;
@@ -629,8 +650,8 @@
     
     while (vm_region_64(mach_task_self(), &address, &size, VM_REGION_BASIC_INFO_64, (vm_region_info_t)&info, &info_count, &object_name) == KERN_SUCCESS) {
         // Check for suspicious memory patterns
-        if ((info.protection & VM_PROT_READ) &&
-            (info.protection & VM_PROT_WRITE) &&
+        if ((info.protection & VM_PROT_READ) && 
+            (info.protection & VM_PROT_WRITE) && 
             (info.protection & VM_PROT_EXECUTE)) {
             return NO;
         }
@@ -951,10 +972,204 @@
 }
 
 - (BOOL)isProcessRunning:(const char*)processName {
-    // Implementation of process checking
-    // This is a simplified version - in production, you'd want to implement
-    // a more thorough check of running processes
+    // Method 1: Using sysctl to get process list
+    if ([self isProcessRunningViaSysctl:processName]) {
+        return YES;
+    }
+    
+    // Method 2: Using libproc to get process list
+    if ([self isProcessRunningViaLibproc:processName]) {
+        return YES;
+    }
+    
+    // Method 3: Using system() to check process
+    if ([self isProcessRunningViaSystem:processName]) {
+        return YES;
+    }
+    
     return NO;
 }
 
-@end
+- (BOOL)isProcessRunningViaSysctl:(const char*)processName {
+    int mib[4] = {CTL_KERN, KERN_PROC, KERN_PROC_ALL, 0};
+    size_t size;
+    
+    // Get the size of the process list
+    if (sysctl(mib, 4, NULL, &size, NULL, 0) < 0) {
+        return NO;
+    }
+    
+    // Allocate memory for the process list
+    struct kinfo_proc *procList = malloc(size);
+    if (procList == NULL) {
+        return NO;
+    }
+    
+    // Get the process list
+    if (sysctl(mib, 4, procList, &size, NULL, 0) < 0) {
+        free(procList);
+        return NO;
+    }
+    
+    // Calculate number of processes
+    int procCount = (int)(size / sizeof(struct kinfo_proc));
+    
+    // Check each process
+    for (int i = 0; i < procCount; i++) {
+        if (strcmp(procList[i].kp_proc.p_comm, processName) == 0) {
+            free(procList);
+            return YES;
+        }
+    }
+    
+    free(procList);
+    return NO;
+}
+
+- (BOOL)isProcessRunningViaLibproc:(const char*)processName {
+    pid_t pids[2048];
+    int bytes = proc_listpids(PROC_ALL_PIDS, 0, pids, sizeof(pids));
+    int n_proc = bytes / sizeof(pids[0]);
+    
+    for (int i = 0; i < n_proc; i++) {
+        if (pids[i] == 0) {
+            continue;
+        }
+        
+        char name[PROC_PIDPATHINFO_MAXSIZE];
+        if (proc_name(pids[i], name, sizeof(name)) > 0) {
+            if (strstr(name, processName) != NULL) {
+                return YES;
+            }
+        }
+    }
+    
+    return NO;
+}
+
+- (BOOL)isProcessRunningViaSystem:(const char*)processName {
+    char command[256];
+    snprintf(command, sizeof(command), "ps -A | grep %s > /dev/null", processName);
+    
+    int result = system(command);
+    return (result == 0);
+}
+
+#pragma mark - Objection Detection Methods
+
+- (BOOL)checkObjection {
+    // Check for Objection artifacts
+    if ([self checkObjectionArtifacts]) {
+        return YES;
+    }
+    
+    // Check for Objection environment
+    if ([self checkObjectionEnvironment]) {
+        return YES;
+    }
+    
+    // Check for Objection processes
+    if ([self checkObjectionProcesses]) {
+        return YES;
+    }
+    
+    // Check for Objection network activity
+    if ([self checkObjectionNetwork]) {
+        return YES;
+    }
+    
+    return NO;
+}
+
+- (BOOL)checkObjectionArtifacts {
+    for (NSString* path in self.objectionArtifacts) {
+        if ([[NSFileManager defaultManager] fileExistsAtPath:path]) {
+            return YES;
+        }
+    }
+    return NO;
+}
+
+- (BOOL)checkObjectionEnvironment {
+    // Check for Objection-related environment variables
+    const char* envVars[] = {
+        "OBJECTION_AGENT",
+        "OBJECTION_AGENT_SCRIPT",
+        "OBJECTION_AGENT_SCRIPT_BASE64",
+        "OBJECTION_AGENT_SCRIPT_PATH",
+        "OBJECTION_AGENT_SCRIPT_URL",
+        "OBJECTION_AGENT_SCRIPT_URL_BASE64",
+        "OBJECTION_AGENT_SCRIPT_URL_PATH",
+        "OBJECTION_AGENT_SCRIPT_URL_BASE64_PATH"
+    };
+    
+    for (int i = 0; i < sizeof(envVars) / sizeof(envVars[0]); i++) {
+        if (getenv(envVars[i]) != NULL) {
+            return YES;
+        }
+    }
+    
+    return NO;
+}
+
+- (BOOL)checkObjectionProcesses {
+    // Check for Objection-related processes
+    const char* processes[] = {
+        "objection",
+        "objection-agent",
+        "objection-gadget",
+        "objection-js-loop",
+        "objection-main"
+    };
+    
+    for (int i = 0; i < sizeof(processes) / sizeof(processes[0]); i++) {
+        if ([self isProcessRunning:processes[i]]) {
+            return YES;
+        }
+    }
+    
+    return NO;
+}
+
+- (BOOL)checkObjectionNetwork {
+    // Check for Objection's default ports
+    NSArray* objectionPorts = @[@(8888), @(8889), @(8890)];
+    for (NSNumber* port in objectionPorts) {
+        if ([self isPortOpen:[port intValue]]) {
+            return YES;
+        }
+    }
+    
+    // Check for Objection's default host
+    const char* objectionHosts[] = {
+        "127.0.0.1",
+        "localhost"
+    };
+    
+    for (int i = 0; i < sizeof(objectionHosts) / sizeof(objectionHosts[0]); i++) {
+        for (NSNumber* port in objectionPorts) {
+            if ([self isHostReachable:objectionHosts[i] onPort:[port intValue]]) {
+                return YES;
+            }
+        }
+    }
+    
+    return NO;
+}
+
+- (BOOL)isHostReachable:(const char*)host onPort:(int)port {
+    int sock = socket(AF_INET, SOCK_STREAM, 0);
+    if (sock < 0) return NO;
+    
+    struct sockaddr_in addr;
+    addr.sin_family = AF_INET;
+    addr.sin_port = htons(port);
+    addr.sin_addr.s_addr = inet_addr(host);
+    
+    int result = connect(sock, (struct sockaddr*)&addr, sizeof(addr));
+    close(sock);
+    
+    return result == 0;
+}
+
+@end 
