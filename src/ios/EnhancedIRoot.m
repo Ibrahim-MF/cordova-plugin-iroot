@@ -488,10 +488,10 @@
     BOOL isTampered = NO;
     
     // Check for code signature
-    if (![self checkCodeSignature]) {
-        isTampered = YES;
-        [detectedIssues addObject:@"code_signature_invalid"];
-    }
+    // if (![self checkCodeSignature]) {
+    //     isTampered = YES;
+    //     [detectedIssues addObject:@"code_signature_invalid"];
+    // }
     
     // Check for suspicious modifications
     if ([self checkSuspiciousModifications]) {
