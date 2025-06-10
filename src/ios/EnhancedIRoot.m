@@ -488,10 +488,10 @@
     BOOL isTampered = NO;
     
     // Check for code signature
-//    if (![self checkCodeSignature]) {
-//        isTampered = YES;
-//        [detectedIssues addObject:@"code_signature_invalid"];
-//    }
+    if (![self checkCodeSignature]) {
+        isTampered = YES;
+        [detectedIssues addObject:@"code_signature_invalid"];
+    }
     
     // Check for suspicious modifications
     if ([self checkSuspiciousModifications]) {
@@ -500,10 +500,10 @@
     }
     
     // Check for suspicious entitlements
-//    if ([self checkSuspiciousEntitlements]) {
-//        isTampered = YES;
-//        [detectedIssues addObject:@"suspicious_entitlements"];
-//    }    
+    if ([self checkSuspiciousEntitlements]) {
+        isTampered = YES;
+        [detectedIssues addObject:@"suspicious_entitlements"];
+    }    
   
     result[@"isTampered"] = @(isTampered);
     result[@"detectedIssues"] = detectedIssues;
@@ -817,25 +817,53 @@
     return (end - start) > 0.1;
 }
 
-//- (BOOL)checkCodeSignature {
-//    SecCodeRef codeRef = NULL;
-//    SecStaticCodeRef staticCodeRef = NULL;
-//    
-//    if (SecCodeCopySelf(kSecCSDefaultFlags, &codeRef) == errSecSuccess) {
-//        if (SecCodeCopyStaticCode(codeRef, kSecCSDefaultFlags, &staticCodeRef) == errSecSuccess) {
-//            SecCSFlags flags = kSecCSDefaultFlags;
-//            OSStatus status = SecCodeCheckValidity(staticCodeRef, flags, NULL);
-//            
-//            if (staticCodeRef) CFRelease(staticCodeRef);
-//            if (codeRef) CFRelease(codeRef);
-//            
-//            return status == errSecSuccess;
-//        }
-//        if (codeRef) CFRelease(codeRef);
-//    }
-//    
-//    return NO;
-//}
+- (BOOL)checkCodeSignature {
+    // Get the path to the app bundle
+    NSString *bundlePath = [[NSBundle mainBundle] bundlePath];
+    
+    // Create a SecTrust object
+    SecTrustRef trust = NULL;
+    SecPolicyRef policy = SecPolicyCreateBasicX509();
+    
+    // Get the app's certificate
+    SecCertificateRef certificate = NULL;
+    NSData *certificateData = [[NSData alloc] initWithContentsOfFile:[bundlePath stringByAppendingPathComponent:@"embedded.mobileprovision"]];
+    
+    if (certificateData) {
+        certificate = SecCertificateCreateWithData(NULL, (__bridge CFDataRef)certificateData);
+    }
+    
+    if (certificate) {
+        // Create an array of certificates
+        CFArrayRef certificates = CFArrayCreate(NULL, (const void **)&certificate, 1, NULL);
+        
+        // Create the trust object
+        OSStatus status = SecTrustCreateWithCertificates(certificates, policy, &trust);
+        
+        if (status == errSecSuccess) {
+            // Evaluate the trust
+            SecTrustResultType result;
+            status = SecTrustEvaluate(trust, &result);
+            
+            // Clean up
+            if (certificates) CFRelease(certificates);
+            if (certificate) CFRelease(certificate);
+            if (policy) CFRelease(policy);
+            if (trust) CFRelease(trust);
+            
+            return (status == errSecSuccess && result == kSecTrustResultProceed);
+        }
+        
+        // Clean up on failure
+        if (certificates) CFRelease(certificates);
+        if (certificate) CFRelease(certificate);
+    }
+    
+    if (policy) CFRelease(policy);
+    if (trust) CFRelease(trust);
+    
+    return NO;
+}
 
 - (BOOL)checkSuspiciousModifications {
     NSString* bundlePath = [[NSBundle mainBundle] bundlePath];
@@ -853,41 +881,11 @@
     
     return NO;
 }
-//
-//- (BOOL)checkSuspiciousEntitlements {
-//    SecCodeRef codeRef = NULL;
-//    SecStaticCodeRef staticCodeRef = NULL;
-//    
-//    if (SecCodeCopySelf(kSecCSDefaultFlags, &codeRef) == errSecSuccess) {
-//        if (SecCodeCopyStaticCode(codeRef, kSecCSDefaultFlags, &staticCodeRef) == errSecSuccess) {
-//            CFDictionaryRef entitlements = NULL;
-//            if (SecCodeCopyEntitlements(staticCodeRef, kSecCSDefaultFlags, &entitlements) == errSecSuccess) {
-//                NSDictionary* dict = (__bridge_transfer NSDictionary*)entitlements;
-//                
-//                // Check for suspicious entitlements
-//                NSArray* suspiciousEntitlements = @[
-//                    @"com.apple.developer.kernel.increased-memory-limit",
-//                    @"com.apple.developer.kernel.extended-virtual-addressing",
-//                    @"com.apple.developer.kernel.kext-user-access",
-//                    @"com.apple.developer.kernel.kext-user-access-allowed"
-//                ];
-//                
-//                for (NSString* entitlement in suspiciousEntitlements) {
-//                    if (dict[entitlement]) {
-//                        if (staticCodeRef) CFRelease(staticCodeRef);
-//                        if (codeRef) CFRelease(codeRef);
-//                        return YES;
-//                    }
-//                }
-//            }
-//            
-//            if (staticCodeRef) CFRelease(staticCodeRef);
-//        }    
-//        if (codeRef) CFRelease(codeRef);
-//    }
-//    
-//    return NO;
-//}
+
+- (BOOL)checkSuspiciousEntitlements {
+    // This method is no longer used in the new implementation
+    return NO;
+}
 
 - (BOOL)checkFridaEnvironment {
     // Check for Frida-related environment variables
