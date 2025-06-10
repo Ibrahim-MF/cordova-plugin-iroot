@@ -220,7 +220,17 @@ public class EnhancedIRoot extends CordovaPlugin {
             if (enabledChecks.getOrDefault("hooking", true)) {
                 JSONObject hookingCheck = hookingFrameworkDetector.check();
                 if (hookingCheck.optBoolean("isHooked", false)) {
-                    sendEventToJS("fridaDetected", hookingCheck);
+                    JSONArray issues = hookingCheck.optJSONArray("detectedIssues");
+                    if (issues != null) {
+                        for (int i = 0; i < issues.length(); i++) {
+                            String issue = issues.getString(i);
+                            if (issue.equals("frida_detected")) {
+                                sendEventToJS("fridaDetected", hookingCheck);
+                            } else if (issue.equals("objection_detected")) {
+                                sendEventToJS("objectionDetected", hookingCheck);
+                            }
+                        }
+                    }
                 }
                 report.put("hooking", hookingCheck);
             }
