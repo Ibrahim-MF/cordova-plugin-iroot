@@ -882,7 +882,7 @@
 //            }
 //            
 //            if (staticCodeRef) CFRelease(staticCodeRef);
-//        }
+//        }    
 //        if (codeRef) CFRelease(codeRef);
 //    }
 //    
@@ -977,16 +977,6 @@
         return YES;
     }
     
-    // Method 2: Using libproc to get process list
-    if ([self isProcessRunningViaLibproc:processName]) {
-        return YES;
-    }
-    
-    // Method 3: Using system() to check process
-    if ([self isProcessRunningViaSystem:processName]) {
-        return YES;
-    }
-    
     return NO;
 }
 
@@ -1024,35 +1014,6 @@
     
     free(procList);
     return NO;
-}
-
-- (BOOL)isProcessRunningViaLibproc:(const char*)processName {
-    pid_t pids[2048];
-    int bytes = proc_listpids(PROC_ALL_PIDS, 0, pids, sizeof(pids));
-    int n_proc = bytes / sizeof(pids[0]);
-    
-    for (int i = 0; i < n_proc; i++) {
-        if (pids[i] == 0) {
-            continue;
-        }
-        
-        char name[PROC_PIDPATHINFO_MAXSIZE];
-        if (proc_name(pids[i], name, sizeof(name)) > 0) {
-            if (strstr(name, processName) != NULL) {
-                return YES;
-            }
-        }
-    }
-    
-    return NO;
-}
-
-- (BOOL)isProcessRunningViaSystem:(const char*)processName {
-    char command[256];
-    snprintf(command, sizeof(command), "ps -A | grep %s > /dev/null", processName);
-    
-    int result = system(command);
-    return (result == 0);
 }
 
 #pragma mark - Objection Detection Methods
