@@ -186,7 +186,9 @@ public class EnhancedIRoot extends CordovaPlugin {
             monitoringExecutor.shutdown();
             monitoringExecutor = null;
         }
-        callbackContext.success();
+        if (callbackContext != null) {
+            callbackContext.success();
+        }
     }
 
     private void getThreatReport(CallbackContext callbackContext) {
