@@ -1,7 +1,8 @@
-repositories{
-    maven { url 'https://jitpack.io' }
+repositories {
+    google()
+    mavenCentral()
 }
 
 dependencies {
-    implementation 'com.github.scottyab:rootbeer:0.1.0'
+    implementation 'com.scottyab:rootbeer-lib:0.1.1'
 }
