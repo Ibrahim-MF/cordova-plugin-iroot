@@ -580,6 +580,12 @@ enum {
     do {
         // Add to the size
         size += size / 10;
+        // Guard against runaway allocation (e.g. under AddressSanitizer)
+        const size_t maxBytes = 64 * 1024 * 1024;
+        if (size > maxBytes) {
+            if (process) { free(process); }
+            return nil;
+        }
         // Get the new process
         newprocess = realloc(process, size);
         // If the process selected doesn't exist
