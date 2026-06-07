@@ -172,7 +172,7 @@ public class EnhancedIRoot extends CordovaPlugin {
         }
 
         try {
-            int interval = options.optInt("interval", 5000); // Default 5 seconds
+            int interval = options.optInt("interval", 10000); // Default 10 seconds
             monitoringExecutor = Executors.newSingleThreadScheduledExecutor();
             monitoringExecutor.scheduleAtFixedRate(this::runMonitoringChecks, 0, interval, TimeUnit.MILLISECONDS);
             callbackContext.success();
@@ -276,4 +276,4 @@ public class EnhancedIRoot extends CordovaPlugin {
         stopMonitoring(null);
         super.onDestroy();
     }
-} 
+}
