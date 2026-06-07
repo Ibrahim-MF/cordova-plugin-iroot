@@ -3,10 +3,27 @@ repositories {
     mavenCentral()
 }
 
+// Capacitor/Cordova may apply this Gradle reference from different modules
+// (android/app vs capacitor-cordova-android-plugins). Resolve CMake path dynamically.
+def cmakeCandidates = [
+    file("src/main/cpp/CMakeLists.txt"),
+    file("../capacitor-cordova-android-plugins/src/main/cpp/CMakeLists.txt"),
+    file("../app/src/main/cpp/CMakeLists.txt")
+]
+
+def resolvedCmake = cmakeCandidates.find { it.exists() }
+if (resolvedCmake == null) {
+    // Keep a sane default for Gradle sync error messaging.
+    resolvedCmake = cmakeCandidates[0]
+    logger.lifecycle("[cordova-plugin-iroot] CMakeLists not found yet; defaulting to ${resolvedCmake}")
+} else {
+    logger.lifecycle("[cordova-plugin-iroot] Using CMakeLists at ${resolvedCmake}")
+}
+
 android {
     externalNativeBuild {
         cmake {
-            path "src/main/cpp/CMakeLists.txt"
+            path resolvedCmake
         }
     }
 

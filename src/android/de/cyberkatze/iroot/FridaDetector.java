@@ -15,6 +15,14 @@ public final class FridaDetector {
     private static final String PROC_TASK_PATH = "/proc/self/task";
     private static final String PROC_FD_PATH = "/proc/self/fd";
 
+    /**
+     * Known frida-server D-Bus control ports. Probing only these (instead of the
+     * full 1024-65535 range) keeps the scan in the millisecond range. Frida on a
+     * non-default port and injected frida-gadget are still caught port-independently
+     * via the native /proc/self/maps scan (HOOK_FRIDA_MAPS) in native_probe.c.
+     */
+    private static final int[] FRIDA_DBUS_PORTS = {27042, 27043};
+
     private FridaDetector() {
     }
 
@@ -108,7 +116,7 @@ public final class FridaDetector {
     }
 
     private static boolean scanDbusPorts() {
-        for (int port = 1024; port <= 65535; port++) {
+        for (int port : FRIDA_DBUS_PORTS) {
             if (probeDbus(port)) {
                 return true;
             }
