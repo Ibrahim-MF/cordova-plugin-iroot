@@ -86,6 +86,9 @@
         <source-file src="src/android/de/cyberkatze/iroot/AppIntegrityChecker.java" target-dir="src/de/cyberkatze/iroot"/>
         <resource-file src="src/android/cpp/CMakeLists.txt" target="src/main/cpp/CMakeLists.txt"/>
         <resource-file src="src/android/cpp/native_probe.c" target="src/main/cpp/native_probe.c"/>
+        <!-- Copy native sources for app-module style Cordova/Capacitor builds -->
+        <resource-file src="src/android/cpp/CMakeLists.txt" target="app/src/main/cpp/CMakeLists.txt"/>
+        <resource-file src="src/android/cpp/native_probe.c" target="app/src/main/cpp/native_probe.c"/>
 
         <framework custom="true" src="src/android/build-extras.gradle" type="gradleReference"/>
     </platform>
