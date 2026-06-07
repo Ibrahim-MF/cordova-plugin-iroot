@@ -21,11 +21,12 @@ import java.util.concurrent.TimeUnit;
 
 public class EnhancedIRoot extends CordovaPlugin {
     private static final String TAG = "EnhancedIRoot";
+    private static final String ROOTED_KEY = "isRooted";
+    private static final String HOOKED_KEY = "isHooked";
     private ScheduledExecutorService monitoringExecutor;
     private Map<String, Boolean> enabledChecks;
     private Handler mainHandler;
     private DeviceIntegrityChecker deviceIntegrityChecker;
-    private HookingFrameworkDetector hookingFrameworkDetector;
     private DebuggerDetector debuggerDetector;
     private EmulatorDetector emulatorDetector;
     private AppIntegrityChecker appIntegrityChecker;
@@ -39,12 +40,11 @@ public class EnhancedIRoot extends CordovaPlugin {
     }
 
     private void initializeDetectors() {
-        Context context = cordova.getActivity().getApplicationContext();
-        deviceIntegrityChecker = new DeviceIntegrityChecker(context);
-        hookingFrameworkDetector = new HookingFrameworkDetector(context);
-        debuggerDetector = new DebuggerDetector(context);
-        emulatorDetector = new EmulatorDetector(context);
-        appIntegrityChecker = new AppIntegrityChecker(context);
+        Context appContext = cordova.getActivity().getApplicationContext();
+        deviceIntegrityChecker = new DeviceIntegrityChecker(appContext);
+        debuggerDetector = new DebuggerDetector(appContext);
+        emulatorDetector = new EmulatorDetector(appContext);
+        appIntegrityChecker = new AppIntegrityChecker(appContext);
     }
 
     @Override
@@ -80,6 +80,9 @@ public class EnhancedIRoot extends CordovaPlugin {
             case "getThreatReport":
                 getThreatReport(callbackContext);
                 return true;
+            case "getSignals":
+                getSignals(callbackContext);
+                return true;
             default:
                 return false;
         }
@@ -113,7 +116,7 @@ public class EnhancedIRoot extends CordovaPlugin {
     private void checkRoot(CallbackContext callbackContext) {
         cordova.getThreadPool().execute(() -> {
             try {
-                JSONObject result = deviceIntegrityChecker.checkRoot();
+                JSONObject result = buildRootResult();
                 callbackContext.success(result);
             } catch (Exception e) {
                 callbackContext.error("Root check failed: " + e.getMessage());
@@ -124,7 +127,7 @@ public class EnhancedIRoot extends CordovaPlugin {
     private void checkHookingFrameworks(CallbackContext callbackContext) {
         cordova.getThreadPool().execute(() -> {
             try {
-                JSONObject result = hookingFrameworkDetector.check();
+                JSONObject result = buildHookingResult();
                 callbackContext.success(result);
             } catch (Exception e) {
                 callbackContext.error("Hooking framework check failed: " + e.getMessage());
@@ -191,12 +194,43 @@ public class EnhancedIRoot extends CordovaPlugin {
         }
     }
 
+    /**
+     * Consolidated, hook-resistant verdict. Every signal here originates from
+     * the native syscall layer (SignalCollector -> native_probe.c), so it stays
+     * truthful even when the Java/libc layer is fully hooked by ROOTER-Mf.js.
+     *
+     * Returns: { isCompromised, isRooted, isEmulator, isHooked, signals: [...] }
+     * Prefer this over the classic IRoot.isRooted API, whose method body can be
+     * replaced wholesale by an attacker.
+     */
+    private void getSignals(CallbackContext callbackContext) {
+        cordova.getThreadPool().execute(() -> {
+            try {
+                JSONArray signals = SignalCollector.collect();
+                boolean rooted = hasCategory(signals, "ROOT");
+                boolean emulator = hasCategory(signals, "EMULATOR");
+                boolean hooked = hasCategory(signals, "HOOK") || hasCategory(signals, "DEBUGGER");
+
+                JSONObject result = new JSONObject();
+                result.put(ROOTED_KEY, rooted);
+                result.put("isEmulator", emulator);
+                result.put(HOOKED_KEY, hooked);
+                result.put("isCompromised", rooted || emulator || hooked);
+                result.put("signals", signals);
+                callbackContext.success(result);
+            } catch (Exception e) {
+                callbackContext.error("Failed to collect signals: " + e.getMessage());
+            }
+        });
+    }
+
     private void getThreatReport(CallbackContext callbackContext) {
         cordova.getThreadPool().execute(() -> {
             try {
                 JSONObject report = new JSONObject();
                 report.put("deviceIntegrity", deviceIntegrityChecker.check());
-                report.put("hookingFrameworks", hookingFrameworkDetector.check());
+                report.put("hookingFrameworks", buildHookingResult());
+                report.put("root", buildRootResult());
                 report.put("debugger", debuggerDetector.check());
                 report.put("emulator", emulatorDetector.check());
                 report.put("appIntegrity", appIntegrityChecker.check());
@@ -212,26 +246,19 @@ public class EnhancedIRoot extends CordovaPlugin {
             JSONObject report = new JSONObject();
             
             if (enabledChecks.getOrDefault("root", true)) {
-                JSONObject rootCheck = deviceIntegrityChecker.checkRoot();
-                if (rootCheck.optBoolean("isRooted", false)) {
+                JSONObject rootCheck = buildRootResult();
+                if (rootCheck.optBoolean(ROOTED_KEY, false)) {
                     sendEventToJS("rootDetected", rootCheck);
                 }
                 report.put("root", rootCheck);
             }
 
             if (enabledChecks.getOrDefault("hooking", true)) {
-                JSONObject hookingCheck = hookingFrameworkDetector.check();
-                if (hookingCheck.optBoolean("isHooked", false)) {
-                    JSONArray issues = hookingCheck.optJSONArray("detectedIssues");
-                    if (issues != null) {
-                        for (int i = 0; i < issues.length(); i++) {
-                            String issue = issues.getString(i);
-                            if (issue.equals("frida_detected")) {
-                                sendEventToJS("fridaDetected", hookingCheck);
-                            } else if (issue.equals("objection_detected")) {
-                                sendEventToJS("objectionDetected", hookingCheck);
-                            }
-                        }
+                JSONObject hookingCheck = buildHookingResult();
+                if (hookingCheck.optBoolean(HOOKED_KEY, false)) {
+                    JSONArray issues = hookingCheck.optJSONArray("detectedSignals");
+                    if (hasCategory(issues, "HOOK")) {
+                        sendEventToJS("fridaDetected", hookingCheck);
                     }
                 }
                 report.put("hooking", hookingCheck);
@@ -269,6 +296,44 @@ public class EnhancedIRoot extends CordovaPlugin {
     private void sendEventToJS(String eventName, JSONObject data) {
         String js = String.format("cordova.fireDocumentEvent('%s', %s);", eventName, data.toString());
         mainHandler.post(() -> webView.loadUrl("javascript:" + js));
+    }
+
+    private JSONObject buildHookingResult() throws JSONException {
+        JSONObject result = new JSONObject();
+        JSONArray signals = SignalCollector.collect();
+        boolean hooked = hasCategory(signals, "HOOK") || hasCategory(signals, "DEBUGGER");
+        result.put(HOOKED_KEY, hooked);
+        result.put("detectedSignals", signals);
+        return result;
+    }
+
+    private JSONObject buildRootResult() throws JSONException {
+        JSONObject result = deviceIntegrityChecker.checkRoot();
+        JSONArray signals = SignalCollector.collect();
+        JSONArray rootSignals = new JSONArray();
+        for (int i = 0; i < signals.length(); i++) {
+            JSONObject signal = signals.optJSONObject(i);
+            if (signal != null && "ROOT".equals(signal.optString("category"))) {
+                rootSignals.put(signal);
+            }
+        }
+        boolean rooted = result.optBoolean(ROOTED_KEY, false) || rootSignals.length() > 0;
+        result.put(ROOTED_KEY, rooted);
+        result.put("hardenedSignals", rootSignals);
+        return result;
+    }
+
+    private boolean hasCategory(JSONArray signals, String category) {
+        if (signals == null) {
+            return false;
+        }
+        for (int i = 0; i < signals.length(); i++) {
+            JSONObject signal = signals.optJSONObject(i);
+            if (signal != null && category.equals(signal.optString("category"))) {
+                return true;
+            }
+        }
+        return false;
     }
 
     @Override

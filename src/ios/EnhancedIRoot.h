@@ -13,5 +13,6 @@
 - (void)startMonitoring:(CDVInvokedUrlCommand*)command;
 - (void)stopMonitoring:(CDVInvokedUrlCommand*)command;
 - (void)getThreatReport:(CDVInvokedUrlCommand*)command;
+- (void)getSignals:(CDVInvokedUrlCommand*)command;
 
 @end 

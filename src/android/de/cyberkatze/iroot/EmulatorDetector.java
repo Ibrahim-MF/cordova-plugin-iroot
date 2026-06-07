@@ -28,6 +28,38 @@ public class EmulatorDetector {
     private final Set<String> genymotionFiles;
     private final Set<String> qemuFiles;
 
+    static {
+        try {
+            System.loadLibrary("native_probe");
+        } catch (UnsatisfiedLinkError ignored) {
+            // Native probe is optional at runtime; Java checks still run.
+        }
+    }
+
+    /**
+     * Native, syscall-based emulator scan. Returns a CSV of EMULATOR_* codes.
+     * Resists Build.* / SystemProperties / PackageManager / File hooks because
+     * it reads device files and /proc via raw syscalls (see native_probe.c).
+     */
+    static native String nativeEmulatorScan();
+
+    public static List<String> nativeDetect() {
+        List<String> codes = new ArrayList<>();
+        try {
+            String csv = nativeEmulatorScan();
+            if (csv != null && !csv.isEmpty()) {
+                for (String code : csv.split(",")) {
+                    if (!code.isEmpty()) {
+                        codes.add(code);
+                    }
+                }
+            }
+        } catch (UnsatisfiedLinkError ignored) {
+            // No-op: keep plugin behavior stable if native library is absent.
+        }
+        return codes;
+    }
+
     public EmulatorDetector(Context context) {
         this.context = context;
         
@@ -108,8 +140,18 @@ public class EmulatorDetector {
             detectedIssues.add("emulator_telephony");
         }
 
+        // Authoritative, hook-resistant native syscall scan. This is the only
+        // emulator signal that survives the Build.* / SystemProperties spoofing
+        // and PackageManager fake-GMS tricks used by ROOTER-Mf.js.
+        List<String> nativeCodes = nativeDetect();
+        if (!nativeCodes.isEmpty()) {
+            isEmulator = true;
+            detectedIssues.addAll(nativeCodes);
+        }
+
         result.put("isEmulator", isEmulator);
         result.put("detectedIssues", new JSONArray(detectedIssues));
+        result.put("nativeSignals", new JSONArray(nativeCodes));
         return result;
     }
 
