@@ -24,6 +24,9 @@ import java.util.List;
 
 public class AppIntegrityChecker {
     private static final String TAG = "AppIntegrityChecker";
+    private static final int RISK_THRESHOLD = 70;
+    private static final int SCORE_HIGH_CONFIDENCE = 90;
+    private static final int SCORE_MEDIUM_CONFIDENCE = 50;
     private final Context context;
     private final byte[] expectedSignature;
 
@@ -34,31 +37,31 @@ public class AppIntegrityChecker {
 
     public JSONObject check() throws JSONException {
         JSONObject result = new JSONObject();
-        boolean isTampered = false;
         List<String> detectedIssues = new ArrayList<>();
+        int riskScore = 0;
 
         // Check app signature
         if (checkAppSignature()) {
-            isTampered = true;
             detectedIssues.add("signature_mismatch");
+            riskScore = addRisk(riskScore, SCORE_HIGH_CONFIDENCE);
         }
 
         // Check if app is debuggable
         if (checkDebuggable()) {
-            isTampered = true;
             detectedIssues.add("app_debuggable");
+            riskScore = addRisk(riskScore, SCORE_MEDIUM_CONFIDENCE);
         }
 
         // Check if app is running in debug mode
         if (checkDebugMode()) {
-            isTampered = true;
             detectedIssues.add("debug_mode");
+            riskScore = addRisk(riskScore, SCORE_MEDIUM_CONFIDENCE);
         }
 
         // Check for repackaging
         if (checkRepackaging()) {
-            isTampered = true;
             detectedIssues.add("repackaging_detected");
+            riskScore = addRisk(riskScore, SCORE_HIGH_CONFIDENCE);
         }
 
         // Check for suspicious modifications
@@ -67,9 +70,15 @@ public class AppIntegrityChecker {
         //     detectedIssues.add("suspicious_modifications");
         // }
 
-        result.put("isTampered", isTampered);
+        result.put("isTampered", riskScore >= RISK_THRESHOLD);
+        result.put("riskScore", riskScore);
+        result.put("riskThreshold", RISK_THRESHOLD);
         result.put("detectedIssues", new JSONArray(detectedIssues));
         return result;
+    }
+
+    private int addRisk(int currentScore, int issueScore) {
+        return Math.min(100, currentScore + issueScore);
     }
 
     private byte[] getAppSignature() {
@@ -223,4 +232,4 @@ public class AppIntegrityChecker {
         }
         return null;
     }
-} 
+}
