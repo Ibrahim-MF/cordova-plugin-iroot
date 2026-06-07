@@ -200,10 +200,8 @@ public class DeviceIntegrityChecker {
             }
         }
 
-        // Check for Magisk in mount points
-        try {
-            Process process = Runtime.getRuntime().exec("mount");
-            BufferedReader reader = new BufferedReader(new InputStreamReader(process.getInputStream()));
+        // Read mountinfo directly — Runtime.exec("mount") can block 30+ seconds on emulators.
+        try (BufferedReader reader = new BufferedReader(new FileReader("/proc/self/mountinfo"))) {
             String line;
             while ((line = reader.readLine()) != null) {
                 if (line.contains("magisk")) {
@@ -211,7 +209,7 @@ public class DeviceIntegrityChecker {
                 }
             }
         } catch (IOException e) {
-            Log.e(TAG, "Error checking Magisk mount points: " + e.getMessage());
+            Log.e(TAG, "Error checking Magisk mountinfo: " + e.getMessage());
         }
 
         return false;
@@ -243,11 +241,10 @@ public class DeviceIntegrityChecker {
     }
 
     private boolean checkSelinuxStatus() {
-        try {
-            Process process = Runtime.getRuntime().exec("getenforce");
-            BufferedReader reader = new BufferedReader(new InputStreamReader(process.getInputStream()));
+        try (BufferedReader reader = new BufferedReader(new FileReader("/sys/fs/selinux/enforce"))) {
             String line = reader.readLine();
-            return line != null && line.equals("Permissive");
+            // 0 = permissive, 1 = enforcing
+            return line != null && line.trim().equals("0");
         } catch (IOException e) {
             Log.e(TAG, "Error checking SELinux status: " + e.getMessage());
             return false;

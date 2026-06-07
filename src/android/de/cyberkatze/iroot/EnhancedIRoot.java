@@ -206,20 +206,22 @@ public class EnhancedIRoot extends CordovaPlugin {
     private void getSignals(CallbackContext callbackContext) {
         cordova.getThreadPool().execute(() -> {
             try {
+                // Native-only fast path. Do NOT call deviceIntegrityChecker.checkRoot()
+                // here — it runs Runtime.exec("mount") and duplicate native scans that
+                // can block for 30+ seconds on emulators.
                 JSONArray signals = SignalCollector.collect();
-                JSONObject rootResult = deviceIntegrityChecker.checkRoot();
-                boolean rooted = hasCategory(signals, "ROOT")
-                        || rootResult.optBoolean(ROOTED_KEY, false);
+                boolean rooted = hasCategory(signals, "ROOT");
                 boolean emulator = hasCategory(signals, "EMULATOR");
                 boolean hooked = hasCategory(signals, "HOOK") || hasCategory(signals, "DEBUGGER");
+                int riskScore = riskScoreFromSignals(signals);
 
                 JSONObject result = new JSONObject();
                 result.put(ROOTED_KEY, rooted);
                 result.put("isEmulator", emulator);
                 result.put(HOOKED_KEY, hooked);
                 result.put("isCompromised", rooted || emulator || hooked);
-                result.put("riskScore", rootResult.optInt("riskScore", 0));
-                result.put("riskThreshold", rootResult.optInt("riskThreshold", 70));
+                result.put("riskScore", riskScore);
+                result.put("riskThreshold", 70);
                 result.put("signals", signals);
                 callbackContext.success(result);
             } catch (Exception e) {
@@ -338,6 +340,30 @@ public class EnhancedIRoot extends CordovaPlugin {
             }
         }
         return false;
+    }
+
+    private int riskScoreFromSignals(JSONArray signals) {
+        if (signals == null) {
+            return 0;
+        }
+
+        int score = 0;
+        for (int i = 0; i < signals.length(); i++) {
+            JSONObject signal = signals.optJSONObject(i);
+            if (signal == null) {
+                continue;
+            }
+
+            String category = signal.optString("category");
+            if ("ROOT".equals(category)) {
+                score = Math.min(100, score + 80);
+            } else if ("HOOK".equals(category) || "DEBUGGER".equals(category)) {
+                score = Math.min(100, score + 90);
+            } else if ("EMULATOR".equals(category)) {
+                score = Math.min(100, score + 50);
+            }
+        }
+        return score;
     }
 
     @Override
