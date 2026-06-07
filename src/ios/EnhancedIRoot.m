@@ -16,6 +16,8 @@
 #import <netinet/in.h>
 #import <arpa/inet.h>
 #import <math.h>
+#import <pthread.h>
+#import <string.h>
 
 @interface EnhancedIRoot ()
 
@@ -28,6 +30,11 @@
 @property (nonatomic, strong) NSArray *objectionArtifacts;
 @property (nonatomic, strong) NSData *integrityChecksum;
 @property (nonatomic, strong) NSTimer *integrityTimer;
+
+- (BOOL)checkFridaDyldImages;
+- (BOOL)checkFridaThreadNames;
+- (BOOL)checkFridaDbusPorts;
+- (BOOL)probeDbusPort:(int)port;
 
 @end
 
@@ -488,10 +495,10 @@
     BOOL isTampered = NO;
     
     // Check for code signature
-    // if (![self checkCodeSignature]) {
-    //     isTampered = YES;
-    //     [detectedIssues addObject:@"code_signature_invalid"];
-    // }
+    if (![self checkCodeSignature]) {
+        isTampered = YES;
+        [detectedIssues addObject:@"code_signature_invalid"];
+    }
     
     // Check for suspicious modifications
     if ([self checkSuspiciousModifications]) {
@@ -598,6 +605,18 @@
 }
 
 - (BOOL)checkFridaInternal {
+    if ([self checkFridaDyldImages]) {
+        return YES;
+    }
+
+    if ([self checkFridaThreadNames]) {
+        return YES;
+    }
+
+    if ([self checkFridaDbusPorts]) {
+        return YES;
+    }
+
     // Check for Frida environment variables
     if ([self checkFridaEnvironment]) {
         return YES;
@@ -613,6 +632,103 @@
         return YES;
     }
     
+    return NO;
+}
+
+- (BOOL)checkFridaDyldImages {
+    for (uint32_t i = 0; i < _dyld_image_count(); i++) {
+        const char *imageName = _dyld_get_image_name(i);
+        if (imageName == NULL) {
+            continue;
+        }
+
+        NSString *name = [[NSString stringWithUTF8String:imageName] lowercaseString];
+        if ([name containsString:@"frida"] ||
+            [name containsString:@"gadget"] ||
+            [name containsString:@"gum"]) {
+            return YES;
+        }
+    }
+    return NO;
+}
+
+- (BOOL)checkFridaThreadNames {
+    thread_act_array_t threads;
+    mach_msg_type_number_t count = 0;
+    kern_return_t status = task_threads(mach_task_self(), &threads, &count);
+    if (status != KERN_SUCCESS) {
+        return NO;
+    }
+
+    BOOL found = NO;
+    for (mach_msg_type_number_t i = 0; i < count; i++) {
+        pthread_t pth = pthread_from_mach_thread_np(threads[i]);
+        if (pth == NULL) {
+            continue;
+        }
+
+        char threadName[64] = {0};
+        if (pthread_getname_np(pth, threadName, sizeof(threadName)) == 0) {
+            NSString *name = [[NSString stringWithUTF8String:threadName] lowercaseString];
+            if ([name containsString:@"gum-js"] ||
+                [name isEqualToString:@"gmain"] ||
+                [name containsString:@"frida"]) {
+                found = YES;
+                break;
+            }
+        }
+    }
+
+    vm_deallocate(mach_task_self(),
+                  (vm_address_t)threads,
+                  (vm_size_t)(count * sizeof(thread_t)));
+    return found;
+}
+
+- (BOOL)checkFridaDbusPorts {
+    for (int port = 1024; port <= 65535; port++) {
+        if ([self probeDbusPort:port]) {
+            return YES;
+        }
+    }
+    return NO;
+}
+
+- (BOOL)probeDbusPort:(int)port {
+    int fd = socket(AF_INET, SOCK_STREAM, 0);
+    if (fd < 0) {
+        return NO;
+    }
+
+    struct timeval timeout;
+    timeout.tv_sec = 0;
+    timeout.tv_usec = 40000;
+    setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout));
+    setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &timeout, sizeof(timeout));
+
+    struct sockaddr_in addr;
+    memset(&addr, 0, sizeof(addr));
+    addr.sin_family = AF_INET;
+    addr.sin_port = htons(port);
+    addr.sin_addr.s_addr = inet_addr("127.0.0.1");
+
+    if (connect(fd, (struct sockaddr *)&addr, sizeof(addr)) != 0) {
+        close(fd);
+        return NO;
+    }
+
+    const char *msg = "\0AUTH\r\n";
+    send(fd, msg, strlen(msg), 0);
+
+    char buf[64] = {0};
+    ssize_t n = recv(fd, buf, sizeof(buf) - 1, 0);
+    close(fd);
+
+    if (n > 0) {
+        NSString *resp = [[NSString alloc] initWithBytes:buf length:(NSUInteger)n encoding:NSASCIIStringEncoding];
+        return [resp containsString:@"REJECT"];
+    }
+
     return NO;
 }
 
@@ -818,59 +934,31 @@
 }
 
 - (BOOL)checkCodeSignature {
-    // Get the path to the app bundle
     NSString *bundlePath = [[NSBundle mainBundle] bundlePath];
-    
-    // Create a SecTrust object
-    SecTrustRef trust = NULL;
-    SecPolicyRef policy = SecPolicyCreateBasicX509();
-    
-    // Get the app's certificate
-    SecCertificateRef certificate = NULL;
-    NSData *certificateData = [[NSData alloc] initWithContentsOfFile:[bundlePath stringByAppendingPathComponent:@"embedded.mobileprovision"]];
-    
-    if (certificateData) {
-        certificate = SecCertificateCreateWithData(NULL, (__bridge CFDataRef)certificateData);
+    NSString *codeSignaturePath = [bundlePath stringByAppendingPathComponent:@"_CodeSignature"];
+    NSString *infoPlistPath = [bundlePath stringByAppendingPathComponent:@"Info.plist"];
+    NSFileManager *fm = [NSFileManager defaultManager];
+
+    if (![fm fileExistsAtPath:codeSignaturePath] || ![fm fileExistsAtPath:infoPlistPath]) {
+        return NO;
     }
-    
-    if (certificate) {
-        // Create an array of certificates
-        CFArrayRef certificates = CFArrayCreate(NULL, (const void **)&certificate, 1, NULL);
-        
-        // Create the trust object
-        OSStatus status = SecTrustCreateWithCertificates(certificates, policy, &trust);
-        
-        if (status == errSecSuccess) {
-            // Evaluate the trust
-            SecTrustResultType result;
-            status = SecTrustEvaluate(trust, &result);
-            
-            // Clean up
-            if (certificates) CFRelease(certificates);
-            if (certificate) CFRelease(certificate);
-            if (policy) CFRelease(policy);
-            if (trust) CFRelease(trust);
-            
-            return (status == errSecSuccess && result == kSecTrustResultProceed);
-        }
-        
-        // Clean up on failure
-        if (certificates) CFRelease(certificates);
-        if (certificate) CFRelease(certificate);
+
+    SecCodeRef selfCode = NULL;
+    OSStatus copyStatus = SecCodeCopySelf(kSecCSDefaultFlags, &selfCode);
+    if (copyStatus != errSecSuccess || selfCode == NULL) {
+        return NO;
     }
-    
-    if (policy) CFRelease(policy);
-    if (trust) CFRelease(trust);
-    
-    return NO;
+
+    OSStatus validity = SecCodeCheckValidity(selfCode, kSecCSStrictValidate, NULL);
+    CFRelease(selfCode);
+    return validity == errSecSuccess;
 }
 
 - (BOOL)checkSuspiciousModifications {
     NSString* bundlePath = [[NSBundle mainBundle] bundlePath];
     NSArray* paths = @[
         [bundlePath stringByAppendingPathComponent:@"Info.plist"],
-        [bundlePath stringByAppendingPathComponent:@"_CodeSignature"],
-        [bundlePath stringByAppendingPathComponent:@"embedded.mobileprovision"]
+        [bundlePath stringByAppendingPathComponent:@"_CodeSignature"]
     ];
     
     for (NSString* path in paths) {

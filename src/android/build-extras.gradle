@@ -3,6 +3,26 @@ repositories {
     mavenCentral()
 }
 
+android {
+    externalNativeBuild {
+        cmake {
+            path "src/main/cpp/CMakeLists.txt"
+        }
+    }
+
+    defaultConfig {
+        externalNativeBuild {
+            cmake {
+                cppFlags ""
+                arguments "-DANDROID_STL=none"
+            }
+        }
+        ndk {
+            abiFilters 'armeabi-v7a', 'arm64-v8a', 'x86_64'
+        }
+    }
+}
+
 dependencies {
     implementation 'com.scottyab:rootbeer-lib:0.1.1'
 }

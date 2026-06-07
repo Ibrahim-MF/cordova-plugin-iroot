@@ -78,9 +78,14 @@
         <source-file src="src/android/de/cyberkatze/iroot/EnhancedIRoot.java" target-dir="src/de/cyberkatze/iroot"/>
         <source-file src="src/android/de/cyberkatze/iroot/DeviceIntegrityChecker.java" target-dir="src/de/cyberkatze/iroot"/>
         <source-file src="src/android/de/cyberkatze/iroot/HookingFrameworkDetector.java" target-dir="src/de/cyberkatze/iroot"/>
+        <source-file src="src/android/de/cyberkatze/iroot/FridaDetector.java" target-dir="src/de/cyberkatze/iroot"/>
+        <source-file src="src/android/de/cyberkatze/iroot/RootHiderDetector.java" target-dir="src/de/cyberkatze/iroot"/>
+        <source-file src="src/android/de/cyberkatze/iroot/SignalCollector.java" target-dir="src/de/cyberkatze/iroot"/>
         <source-file src="src/android/de/cyberkatze/iroot/DebuggerDetector.java" target-dir="src/de/cyberkatze/iroot"/>
         <source-file src="src/android/de/cyberkatze/iroot/EmulatorDetector.java" target-dir="src/de/cyberkatze/iroot"/>
         <source-file src="src/android/de/cyberkatze/iroot/AppIntegrityChecker.java" target-dir="src/de/cyberkatze/iroot"/>
+        <resource-file src="src/android/cpp/CMakeLists.txt" target="app/src/main/cpp/CMakeLists.txt"/>
+        <resource-file src="src/android/cpp/native_probe.c" target="app/src/main/cpp/native_probe.c"/>
 
         <framework custom="true" src="src/android/build-extras.gradle" type="gradleReference"/>
     </platform>
