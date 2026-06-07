@@ -6,6 +6,11 @@ import org.json.JSONObject;
 import java.util.List;
 
 public final class SignalCollector {
+    private static final String CATEGORY_HOOK = "HOOK";
+    private static final String CATEGORY_DEBUGGER = "DEBUGGER";
+    private static final String CATEGORY_ROOT = "ROOT";
+    private static final String CATEGORY_EMULATOR = "EMULATOR";
+
     private SignalCollector() {
     }
 
@@ -20,7 +25,12 @@ public final class SignalCollector {
 
             List<String> rootHiderCodes = RootHiderDetector.detect();
             for (String code : rootHiderCodes) {
-                add(signals, code, "ROOT", "hider");
+                add(signals, code, CATEGORY_ROOT, "hider");
+            }
+
+            List<String> emulatorCodes = EmulatorDetector.nativeDetect();
+            for (String code : emulatorCodes) {
+                add(signals, code, CATEGORY_EMULATOR, "native");
             }
         } catch (Throwable t) {
             add(signals, "COLLECTION_ERROR", "TAMPER", t.getClass().getSimpleName());
@@ -30,16 +40,19 @@ public final class SignalCollector {
     }
 
     private static String categoryFor(String code) {
-        if (code.startsWith("HOOK")) {
-            return "HOOK";
+        if (code.startsWith(CATEGORY_HOOK)) {
+            return CATEGORY_HOOK;
         }
-        if (code.startsWith("DEBUGGER")) {
-            return "DEBUGGER";
+        if (code.startsWith(CATEGORY_DEBUGGER)) {
+            return CATEGORY_DEBUGGER;
         }
-        if (code.startsWith("ROOT")) {
-            return "ROOT";
+        if (code.startsWith(CATEGORY_ROOT)) {
+            return CATEGORY_ROOT;
         }
-        return "HOOK";
+        if (code.startsWith(CATEGORY_EMULATOR)) {
+            return CATEGORY_EMULATOR;
+        }
+        return CATEGORY_HOOK;
     }
 
     private static void add(JSONArray array, String code, String category, String evidence) {

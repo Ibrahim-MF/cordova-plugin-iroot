@@ -22,6 +22,7 @@ import java.util.concurrent.TimeUnit;
 public class EnhancedIRoot extends CordovaPlugin {
     private static final String TAG = "EnhancedIRoot";
     private static final String ROOTED_KEY = "isRooted";
+    private static final String HOOKED_KEY = "isHooked";
     private ScheduledExecutorService monitoringExecutor;
     private Map<String, Boolean> enabledChecks;
     private Handler mainHandler;
@@ -78,6 +79,9 @@ public class EnhancedIRoot extends CordovaPlugin {
                 return true;
             case "getThreatReport":
                 getThreatReport(callbackContext);
+                return true;
+            case "getSignals":
+                getSignals(callbackContext);
                 return true;
             default:
                 return false;
@@ -190,6 +194,36 @@ public class EnhancedIRoot extends CordovaPlugin {
         }
     }
 
+    /**
+     * Consolidated, hook-resistant verdict. Every signal here originates from
+     * the native syscall layer (SignalCollector -> native_probe.c), so it stays
+     * truthful even when the Java/libc layer is fully hooked by ROOTER-Mf.js.
+     *
+     * Returns: { isCompromised, isRooted, isEmulator, isHooked, signals: [...] }
+     * Prefer this over the classic IRoot.isRooted API, whose method body can be
+     * replaced wholesale by an attacker.
+     */
+    private void getSignals(CallbackContext callbackContext) {
+        cordova.getThreadPool().execute(() -> {
+            try {
+                JSONArray signals = SignalCollector.collect();
+                boolean rooted = hasCategory(signals, "ROOT");
+                boolean emulator = hasCategory(signals, "EMULATOR");
+                boolean hooked = hasCategory(signals, "HOOK") || hasCategory(signals, "DEBUGGER");
+
+                JSONObject result = new JSONObject();
+                result.put(ROOTED_KEY, rooted);
+                result.put("isEmulator", emulator);
+                result.put(HOOKED_KEY, hooked);
+                result.put("isCompromised", rooted || emulator || hooked);
+                result.put("signals", signals);
+                callbackContext.success(result);
+            } catch (Exception e) {
+                callbackContext.error("Failed to collect signals: " + e.getMessage());
+            }
+        });
+    }
+
     private void getThreatReport(CallbackContext callbackContext) {
         cordova.getThreadPool().execute(() -> {
             try {
@@ -221,7 +255,7 @@ public class EnhancedIRoot extends CordovaPlugin {
 
             if (enabledChecks.getOrDefault("hooking", true)) {
                 JSONObject hookingCheck = buildHookingResult();
-                if (hookingCheck.optBoolean("isHooked", false)) {
+                if (hookingCheck.optBoolean(HOOKED_KEY, false)) {
                     JSONArray issues = hookingCheck.optJSONArray("detectedSignals");
                     if (hasCategory(issues, "HOOK")) {
                         sendEventToJS("fridaDetected", hookingCheck);
@@ -268,7 +302,7 @@ public class EnhancedIRoot extends CordovaPlugin {
         JSONObject result = new JSONObject();
         JSONArray signals = SignalCollector.collect();
         boolean hooked = hasCategory(signals, "HOOK") || hasCategory(signals, "DEBUGGER");
-        result.put("isHooked", hooked);
+        result.put(HOOKED_KEY, hooked);
         result.put("detectedSignals", signals);
         return result;
     }

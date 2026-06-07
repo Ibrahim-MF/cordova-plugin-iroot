@@ -307,6 +307,38 @@
     }];
 }
 
+- (void)getSignals:(CDVInvokedUrlCommand*)command {
+    [self.commandDelegate runInBackground:^{
+        CDVPluginResult* pluginResult = nil;
+
+        @try {
+            NSDictionary* jailbreak = [self checkJailbreak];
+            NSDictionary* hooking = [self checkHookingFrameworks];
+            NSDictionary* debugger = [self checkDebugger];
+            NSDictionary* emulator = [self checkEmulator];
+            NSDictionary* integrity = [self checkAppIntegrity];
+
+            BOOL rooted = [jailbreak[@"isJailbroken"] boolValue];
+            BOOL isEmulator = [emulator[@"isEmulator"] boolValue];
+            BOOL hooked = [hooking[@"isHooked"] boolValue] || [debugger[@"isDebuggerAttached"] boolValue];
+            BOOL tampered = [integrity[@"isTampered"] boolValue];
+
+            NSMutableDictionary* result = [NSMutableDictionary dictionary];
+            result[@"isRooted"] = @(rooted);
+            result[@"isEmulator"] = @(isEmulator);
+            result[@"isHooked"] = @(hooked);
+            result[@"isTampered"] = @(tampered);
+            result[@"isCompromised"] = @(rooted || isEmulator || hooked || tampered);
+
+            pluginResult = [CDVPluginResult resultWithStatus:CDVCommandStatus_OK messageAsDictionary:result];
+        } @catch (NSException* exception) {
+            pluginResult = [CDVPluginResult resultWithStatus:CDVCommandStatus_ERROR messageAsString:exception.reason];
+        }
+
+        [self.commandDelegate sendPluginResult:pluginResult callbackId:command.callbackId];
+    }];
+}
+
 #pragma mark - Private Methods
 
 - (void)runMonitoringChecks {

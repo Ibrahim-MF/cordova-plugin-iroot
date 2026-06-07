@@ -138,8 +138,20 @@ public class DeviceIntegrityChecker {
             detectedIssues.add("selinux_disabled");
         }
 
+        // Authoritative, hook-resistant native syscall scan (su/magisk/KernelSU/
+        // mountinfo). Every check above relies on java.io.File / Runtime.exec /
+        // SystemProperties, all of which ROOTER-Mf.js neutralizes. The native
+        // layer reads via raw openat/read/faccessat syscalls that the bypass
+        // does not hook, so it stays truthful.
+        List<String> nativeCodes = RootHiderDetector.detect();
+        if (!nativeCodes.isEmpty()) {
+            isRooted = true;
+            detectedIssues.addAll(nativeCodes);
+        }
+
         result.put("isRooted", isRooted);
         result.put("detectedIssues", new JSONArray(detectedIssues));
+        result.put("nativeSignals", new JSONArray(nativeCodes));
         return result;
     }
 
@@ -239,6 +251,11 @@ public class DeviceIntegrityChecker {
     }
 
     private boolean checkEmulator() {
+        // Native syscall scan first — survives Build.* spoofing from ROOTER-Mf.js.
+        if (!EmulatorDetector.nativeDetect().isEmpty()) {
+            return true;
+        }
+
         return (Build.BRAND.startsWith("generic") && Build.DEVICE.startsWith("generic"))
             || Build.FINGERPRINT.startsWith("generic")
             || Build.FINGERPRINT.startsWith("unknown")

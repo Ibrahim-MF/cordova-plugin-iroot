@@ -101,6 +101,15 @@ class EnhancedIRoot {
             exec(resolve, reject, 'EnhancedIRoot', 'getThreatReport', []);
         });
     }
+
+    // Consolidated, hook-resistant verdict computed from the native syscall layer.
+    // Resolves to { isCompromised, isRooted, isEmulator, isHooked, signals }.
+    // Prefer this over IRoot.isRooted as the security gate.
+    getSignals() {
+        return new Promise((resolve, reject) => {
+            exec(resolve, reject, 'EnhancedIRoot', 'getSignals', []);
+        });
+    }
 }
 
 // Create and export a singleton instance
