@@ -718,8 +718,17 @@
 }
 
 - (BOOL)checkFridaDbusPorts {
-    for (int port = 1024; port <= 65535; port++) {
-        if ([self probeDbusPort:port]) {
+    /*
+     * Known frida-server D-Bus control ports. Probing only these (instead of the
+     * full 1024-65535 range) keeps the scan in the millisecond range. Frida on a
+     * non-default port and injected frida-gadget are still caught port-independently
+     * via dyld loaded-image scan and helper-thread names.
+     */
+    static const int fridaDbusPorts[] = {27042, 27043};
+    const size_t portCount = sizeof(fridaDbusPorts) / sizeof(fridaDbusPorts[0]);
+
+    for (size_t i = 0; i < portCount; i++) {
+        if ([self probeDbusPort:fridaDbusPorts[i]]) {
             return YES;
         }
     }
