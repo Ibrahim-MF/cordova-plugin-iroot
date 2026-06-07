@@ -175,7 +175,7 @@ public class EnhancedIRoot extends CordovaPlugin {
         }
 
         try {
-            int interval = options.optInt("interval", 5000); // Default 5 seconds
+            int interval = options.optInt("interval", 10000); // Default 10 seconds
             monitoringExecutor = Executors.newSingleThreadScheduledExecutor();
             monitoringExecutor.scheduleAtFixedRate(this::runMonitoringChecks, 0, interval, TimeUnit.MILLISECONDS);
             callbackContext.success();
@@ -207,7 +207,9 @@ public class EnhancedIRoot extends CordovaPlugin {
         cordova.getThreadPool().execute(() -> {
             try {
                 JSONArray signals = SignalCollector.collect();
-                boolean rooted = hasCategory(signals, "ROOT");
+                JSONObject rootResult = deviceIntegrityChecker.checkRoot();
+                boolean rooted = hasCategory(signals, "ROOT")
+                        || rootResult.optBoolean(ROOTED_KEY, false);
                 boolean emulator = hasCategory(signals, "EMULATOR");
                 boolean hooked = hasCategory(signals, "HOOK") || hasCategory(signals, "DEBUGGER");
 
@@ -216,6 +218,8 @@ public class EnhancedIRoot extends CordovaPlugin {
                 result.put("isEmulator", emulator);
                 result.put(HOOKED_KEY, hooked);
                 result.put("isCompromised", rooted || emulator || hooked);
+                result.put("riskScore", rootResult.optInt("riskScore", 0));
+                result.put("riskThreshold", rootResult.optInt("riskThreshold", 70));
                 result.put("signals", signals);
                 callbackContext.success(result);
             } catch (Exception e) {

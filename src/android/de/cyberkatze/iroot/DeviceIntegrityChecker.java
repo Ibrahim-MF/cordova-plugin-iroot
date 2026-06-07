@@ -25,6 +25,10 @@ import java.util.regex.Pattern;
 
 public class DeviceIntegrityChecker {
     private static final String TAG = "DeviceIntegrityChecker";
+    private static final int RISK_THRESHOLD = 70;
+    private static final int SCORE_HIGH_CONFIDENCE = 90;
+    private static final int SCORE_ROOT_CONFIDENCE = 80;
+    private static final int SCORE_MEDIUM_CONFIDENCE = 50;
     private final Context context;
     private final Set<String> rootPaths;
     private final Set<String> rootPackages;
@@ -99,60 +103,64 @@ public class DeviceIntegrityChecker {
 
     public JSONObject checkRoot() throws JSONException {
         JSONObject result = new JSONObject();
-        boolean isRooted = false;
         List<String> detectedIssues = new ArrayList<>();
+        int riskScore = 0;
 
         // Check for su binary
         if (checkSuBinary()) {
-            isRooted = true;
             detectedIssues.add("su_binary_found");
+            riskScore = addRisk(riskScore, SCORE_ROOT_CONFIDENCE);
         }
 
         // Check for root management apps
         if (checkRootManagementApps()) {
-            isRooted = true;
             detectedIssues.add("root_management_app_found");
+            riskScore = addRisk(riskScore, SCORE_ROOT_CONFIDENCE);
         }
 
         // Check for Magisk
         if (checkMagisk()) {
-            isRooted = true;
             detectedIssues.add("magisk_detected");
+            riskScore = addRisk(riskScore, SCORE_HIGH_CONFIDENCE);
         }
 
         // Check for system properties
         if (checkDangerousProps()) {
-            isRooted = true;
             detectedIssues.add("dangerous_props_found");
+            riskScore = addRisk(riskScore, SCORE_MEDIUM_CONFIDENCE);
         }
 
         // Check for writable system paths
         if (checkWritableSystemPaths()) {
-            isRooted = true;
             detectedIssues.add("writable_system_paths");
+            riskScore = addRisk(riskScore, RISK_THRESHOLD);
         }
 
         // Check for SELinux status
         if (checkSelinuxStatus()) {
-            isRooted = true;
             detectedIssues.add("selinux_disabled");
+            riskScore = addRisk(riskScore, SCORE_MEDIUM_CONFIDENCE);
         }
 
         // Authoritative, hook-resistant native syscall scan (su/magisk/KernelSU/
-        // mountinfo). Every check above relies on java.io.File / Runtime.exec /
-        // SystemProperties, all of which ROOTER-Mf.js neutralizes. The native
-        // layer reads via raw openat/read/faccessat syscalls that the bypass
-        // does not hook, so it stays truthful.
+        // mountinfo). Java-layer checks above are hookable; native reads are not.
         List<String> nativeCodes = RootHiderDetector.detect();
         if (!nativeCodes.isEmpty()) {
-            isRooted = true;
             detectedIssues.addAll(nativeCodes);
+            riskScore = addRisk(riskScore, SCORE_HIGH_CONFIDENCE);
         }
 
+        boolean isRooted = !nativeCodes.isEmpty() || riskScore >= RISK_THRESHOLD;
         result.put("isRooted", isRooted);
+        result.put("riskScore", riskScore);
+        result.put("riskThreshold", RISK_THRESHOLD);
         result.put("detectedIssues", new JSONArray(detectedIssues));
         result.put("nativeSignals", new JSONArray(nativeCodes));
         return result;
+    }
+
+    private int addRisk(int currentScore, int issueScore) {
+        return Math.min(100, currentScore + issueScore);
     }
 
     private boolean checkSuBinary() {

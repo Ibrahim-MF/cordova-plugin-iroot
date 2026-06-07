@@ -1,5 +1,6 @@
 #import "EnhancedIRoot.h"
 #import <sys/stat.h>
+#import <string.h>
 #import <dlfcn.h>
 #import <mach-o/dyld.h>
 #import <sys/syscall.h>
@@ -10,14 +11,14 @@
 #import <Foundation/Foundation.h>
 #import <Security/Security.h>
 #import <CommonCrypto/CommonCrypto.h>
+#import <objc/runtime.h>
 #import <mach/mach.h>
 #import <mach/vm_map.h>
 #import <sys/socket.h>
 #import <netinet/in.h>
 #import <arpa/inet.h>
-#import <math.h>
 #import <pthread.h>
-#import <string.h>
+#import <math.h>
 
 @interface EnhancedIRoot ()
 
@@ -30,13 +31,62 @@
 @property (nonatomic, strong) NSArray *objectionArtifacts;
 @property (nonatomic, strong) NSData *integrityChecksum;
 @property (nonatomic, strong) NSTimer *integrityTimer;
-
-- (BOOL)checkFridaDyldImages;
-- (BOOL)checkFridaThreadNames;
-- (BOOL)checkFridaDbusPorts;
-- (BOOL)probeDbusPort:(int)port;
+@property (nonatomic, strong) NSMutableDictionary<NSString*, NSValue*> *runtimeMethodIMPs;
+@property (nonatomic, strong) NSMutableDictionary<NSString*, NSData*> *runtimeMethodChecksums;
 
 @end
+
+static volatile BOOL EnhancedIRootSuspiciousDyldImageSeen = NO;
+static char EnhancedIRootSuspiciousDyldImageName[512] = {0};
+
+static BOOL EnhancedIRootImageNameContainsInstrumentationToken(const char* imageName) {
+    if (imageName == NULL) {
+        return NO;
+    }
+
+    const char* tokens[] = {
+        "frida",
+        "gum-js",
+        "gumjs",
+        "frida-gadget",
+        "linjector",
+        "objection",
+        "cycript",
+        "substrate",
+        "substitute",
+        "ellekit",
+        "libhooker"
+    };
+
+    for (int i = 0; i < sizeof(tokens) / sizeof(tokens[0]); i++) {
+        if (strcasestr(imageName, tokens[i]) != NULL) {
+            return YES;
+        }
+    }
+
+    return NO;
+}
+
+static void EnhancedIRootDyldImageAdded(const struct mach_header* header, intptr_t slide) {
+    (void)slide;
+    uint32_t imageCount = _dyld_image_count();
+
+    for (uint32_t i = 0; i < imageCount; i++) {
+        if (_dyld_get_image_header(i) != header) {
+            continue;
+        }
+
+        const char* imageName = _dyld_get_image_name(i);
+        if (EnhancedIRootImageNameContainsInstrumentationToken(imageName)) {
+            EnhancedIRootSuspiciousDyldImageSeen = YES;
+            if (imageName != NULL) {
+                strncpy(EnhancedIRootSuspiciousDyldImageName, imageName, sizeof(EnhancedIRootSuspiciousDyldImageName) - 1);
+                EnhancedIRootSuspiciousDyldImageName[sizeof(EnhancedIRootSuspiciousDyldImageName) - 1] = '\0';
+            }
+            return;
+        }
+    }
+}
 
 @implementation EnhancedIRoot
 
@@ -47,11 +97,20 @@
     self.integrityChecksum = [self calculateIntegrityChecksum];
     
     // Start periodic integrity checks
-    self.integrityTimer = [NSTimer scheduledTimerWithTimeInterval:1.0
+    self.integrityTimer = [NSTimer scheduledTimerWithTimeInterval:30.0
                                                          target:self
                                                        selector:@selector(checkIntegrity)
                                                        userInfo:nil
                                                         repeats:YES];
+
+    self.monitoringTimer = [NSTimer scheduledTimerWithTimeInterval:10.0
+                                                           target:self
+                                                         selector:@selector(runRuntimeSentinelChecks)
+                                                         userInfo:nil
+                                                          repeats:YES];
+
+    [self initializeRuntimeIntegrityBaselines];
+    _dyld_register_func_for_add_image(EnhancedIRootDyldImageAdded);
     
     // Initialize jailbreak detection paths
     self.jailbreakPaths = @[
@@ -84,7 +143,21 @@
         @"/var/lib/apt",
         @"/var/lib/cydia",
         @"/var/log/syslog",
-        @"/var/tmp/cydia.log"
+        @"/var/tmp/cydia.log",
+        @"/var/jb",
+        @"/var/jb/Applications/Sileo.app",
+        @"/var/jb/Applications/Zebra.app",
+        @"/var/jb/Library/MobileSubstrate",
+        @"/var/jb/Library/MobileSubstrate/MobileSubstrate.dylib",
+        @"/var/jb/Library/TweakInject",
+        @"/var/jb/usr/bin",
+        @"/var/jb/usr/sbin",
+        @"/var/jb/usr/lib/TweakInject",
+        @"/var/jb/etc/apt",
+        @"/var/jb/var/lib/apt",
+        @"/var/jb/var/lib/dpkg",
+        @"/procursus",
+        @"/private/preboot"
     ];
     
     // Initialize jailbreak binaries
@@ -329,6 +402,9 @@
             result[@"isHooked"] = @(hooked);
             result[@"isTampered"] = @(tampered);
             result[@"isCompromised"] = @(rooted || isEmulator || hooked || tampered);
+            if (hooking[@"riskScore"] != nil) {
+                result[@"riskScore"] = hooking[@"riskScore"];
+            }
 
             pluginResult = [CDVPluginResult resultWithStatus:CDVCommandStatus_OK messageAsDictionary:result];
         } @catch (NSException* exception) {
@@ -388,6 +464,97 @@
     } @catch (NSException* exception) {
         NSLog(@"Error during monitoring checks: %@", exception);
     }
+}
+
+- (void)runRuntimeSentinelChecks {
+    @try {
+        NSDictionary* hookingCheck = [self checkHookingFrameworks];
+        if ([hookingCheck[@"isHooked"] boolValue]) {
+            [self sendEventToJS:@"fridaDetected" withData:hookingCheck];
+        }
+
+        NSDictionary* debuggerCheck = [self checkDebugger];
+        if ([debuggerCheck[@"isDebuggerAttached"] boolValue]) {
+            [self sendEventToJS:@"debuggerDetected" withData:debuggerCheck];
+        }
+    } @catch (NSException* exception) {
+        NSLog(@"EnhancedIRoot runtime sentinel error: %@", exception);
+    }
+}
+
+- (NSArray<NSString*>*)runtimeIntegritySelectorNames {
+    return @[
+        @"checkHookingFrameworks",
+        @"checkFrida",
+        @"checkFridaInternal",
+        @"checkJailbreak",
+        @"checkDebugger",
+        @"checkAppIntegrity",
+        @"getThreatReport:"
+    ];
+}
+
+- (void)initializeRuntimeIntegrityBaselines {
+    self.runtimeMethodIMPs = [NSMutableDictionary dictionary];
+    self.runtimeMethodChecksums = [NSMutableDictionary dictionary];
+
+    for (NSString* selectorName in [self runtimeIntegritySelectorNames]) {
+        SEL selector = NSSelectorFromString(selectorName);
+        Method method = class_getInstanceMethod([self class], selector);
+        if (method == NULL) {
+            continue;
+        }
+
+        IMP implementation = method_getImplementation(method);
+        self.runtimeMethodIMPs[selectorName] = [NSValue valueWithPointer:implementation];
+
+        NSData* checksum = [self checksumForImplementation:implementation length:64];
+        if (checksum != nil) {
+            self.runtimeMethodChecksums[selectorName] = checksum;
+        }
+    }
+}
+
+- (NSData*)checksumForImplementation:(IMP)implementation length:(NSUInteger)length {
+    if (implementation == NULL || length == 0) {
+        return nil;
+    }
+
+    unsigned char hash[CC_SHA256_DIGEST_LENGTH];
+    CC_SHA256((const void*)implementation, (CC_LONG)length, hash);
+    return [NSData dataWithBytes:hash length:CC_SHA256_DIGEST_LENGTH];
+}
+
+- (BOOL)checkRuntimeMethodIntegrity {
+    if (self.runtimeMethodIMPs == nil || self.runtimeMethodChecksums == nil) {
+        return NO;
+    }
+
+    for (NSString* selectorName in [self runtimeIntegritySelectorNames]) {
+        SEL selector = NSSelectorFromString(selectorName);
+        Method method = class_getInstanceMethod([self class], selector);
+        if (method == NULL) {
+            continue;
+        }
+
+        IMP currentImplementation = method_getImplementation(method);
+        NSValue* originalValue = self.runtimeMethodIMPs[selectorName];
+        if (originalValue != nil && [originalValue pointerValue] != currentImplementation) {
+            return YES;
+        }
+
+        NSData* originalChecksum = self.runtimeMethodChecksums[selectorName];
+        NSData* currentChecksum = [self checksumForImplementation:currentImplementation length:64];
+        if (originalChecksum != nil && currentChecksum != nil && ![originalChecksum isEqualToData:currentChecksum]) {
+            return YES;
+        }
+    }
+
+    return NO;
+}
+
+- (BOOL)checkSuspiciousDyldImageCallback {
+    return EnhancedIRootSuspiciousDyldImageSeen;
 }
 
 - (void)sendEventToJS:(NSString*)eventName withData:(NSDictionary*)data {
@@ -454,12 +621,20 @@
     NSMutableDictionary* result = [NSMutableDictionary dictionary];
     NSMutableArray* detectedIssues = [NSMutableArray array];
     BOOL isHooked = NO;
+    NSInteger riskScore = 0;
     
     // Check for suspicious libraries
     for (NSString* library in self.suspiciousLibraries) {
         if (dlopen([library UTF8String], RTLD_NOW)) {
-            isHooked = YES;
-            [detectedIssues addObject:@"suspicious_library_loaded"];
+            NSString* normalizedLibrary = [library lowercaseString];
+            if ([normalizedLibrary containsString:@"frida"] || [normalizedLibrary containsString:@"gadget"]) {
+                isHooked = YES;
+                riskScore += 90;
+                [detectedIssues addObject:@"frida_library_loaded"];
+            } else {
+                riskScore += 60;
+                [detectedIssues addObject:@"suspicious_library_loaded"];
+            }
             break;
         }
     }
@@ -467,28 +642,71 @@
     // Check for Frida
     if ([self checkFrida]) {
         isHooked = YES;
+        riskScore += 90;
         [detectedIssues addObject:@"frida_detected"];
     }
     
+    // Check loaded Mach-O images for runtime instrumentation artifacts.
+    if ([self checkSuspiciousLoadedImages]) {
+        isHooked = YES;
+        riskScore += 90;
+        [detectedIssues addObject:@"suspicious_loaded_image"];
+    }
+
+    // Check Mach thread names for Frida runtime workers.
+    if ([self checkSuspiciousThreadNames]) {
+        riskScore += 50;
+        [detectedIssues addObject:@"suspicious_thread"];
+    }
+
+    // Check dyld callback state for instrumentation images loaded after startup.
+    if ([self checkSuspiciousDyldImageCallback]) {
+        isHooked = YES;
+        riskScore += 90;
+        [detectedIssues addObject:@"suspicious_dyld_image_added"];
+    }
+
+    // Check critical runtime methods for swizzling or inline patches.
+    if ([self checkRuntimeMethodIntegrity]) {
+        isHooked = YES;
+        riskScore += 90;
+        [detectedIssues addObject:@"runtime_integrity_violation"];
+    }
+
     // Check for Objection
     if ([self checkObjection]) {
-        isHooked = YES;
+        riskScore += 50;
         [detectedIssues addObject:@"objection_detected"];
     }
     
     // Check for Cydia Substrate
     if ([self checkSubstrate]) {
-        isHooked = YES;
+        riskScore += 50;
         [detectedIssues addObject:@"substrate_detected"];
     }
     
-    // Check for suspicious ports
-    if ([self checkSuspiciousPorts]) {
+    // Check for Frida default ports.
+    if ([self checkFridaPorts]) {
         isHooked = YES;
+        riskScore += 90;
+        [detectedIssues addObject:@"frida_ports"];
+    }
+
+    // Check for other suspicious ports.
+    if ([self checkSuspiciousPorts]) {
+        riskScore += 50;
         [detectedIssues addObject:@"suspicious_ports"];
     }
     
+    if (riskScore >= 70) {
+        isHooked = YES;
+    }
+
     result[@"isHooked"] = @(isHooked);
+    result[@"riskScore"] = @(riskScore);
+    if (EnhancedIRootSuspiciousDyldImageName[0] != '\0') {
+        result[@"suspiciousDyldImage"] = @(EnhancedIRootSuspiciousDyldImageName);
+    }
     result[@"detectedIssues"] = detectedIssues;
     return result;
 }
@@ -637,18 +855,6 @@
 }
 
 - (BOOL)checkFridaInternal {
-    if ([self checkFridaDyldImages]) {
-        return YES;
-    }
-
-    if ([self checkFridaThreadNames]) {
-        return YES;
-    }
-
-    if ([self checkFridaDbusPorts]) {
-        return YES;
-    }
-
     // Check for Frida environment variables
     if ([self checkFridaEnvironment]) {
         return YES;
@@ -664,112 +870,6 @@
         return YES;
     }
     
-    return NO;
-}
-
-- (BOOL)checkFridaDyldImages {
-    for (uint32_t i = 0; i < _dyld_image_count(); i++) {
-        const char *imageName = _dyld_get_image_name(i);
-        if (imageName == NULL) {
-            continue;
-        }
-
-        NSString *name = [[NSString stringWithUTF8String:imageName] lowercaseString];
-        if ([name containsString:@"frida"] ||
-            [name containsString:@"gadget"] ||
-            [name containsString:@"gum"]) {
-            return YES;
-        }
-    }
-    return NO;
-}
-
-- (BOOL)checkFridaThreadNames {
-    thread_act_array_t threads;
-    mach_msg_type_number_t count = 0;
-    kern_return_t status = task_threads(mach_task_self(), &threads, &count);
-    if (status != KERN_SUCCESS) {
-        return NO;
-    }
-
-    BOOL found = NO;
-    for (mach_msg_type_number_t i = 0; i < count; i++) {
-        pthread_t pth = pthread_from_mach_thread_np(threads[i]);
-        if (pth == NULL) {
-            continue;
-        }
-
-        char threadName[64] = {0};
-        if (pthread_getname_np(pth, threadName, sizeof(threadName)) == 0) {
-            NSString *name = [[NSString stringWithUTF8String:threadName] lowercaseString];
-            if ([name containsString:@"gum-js"] ||
-                [name isEqualToString:@"gmain"] ||
-                [name containsString:@"frida"]) {
-                found = YES;
-                break;
-            }
-        }
-    }
-
-    vm_deallocate(mach_task_self(),
-                  (vm_address_t)threads,
-                  (vm_size_t)(count * sizeof(thread_t)));
-    return found;
-}
-
-- (BOOL)checkFridaDbusPorts {
-    /*
-     * Known frida-server D-Bus control ports. Probing only these (instead of the
-     * full 1024-65535 range) keeps the scan in the millisecond range. Frida on a
-     * non-default port and injected frida-gadget are still caught port-independently
-     * via dyld loaded-image scan and helper-thread names.
-     */
-    static const int fridaDbusPorts[] = {27042, 27043};
-    const size_t portCount = sizeof(fridaDbusPorts) / sizeof(fridaDbusPorts[0]);
-
-    for (size_t i = 0; i < portCount; i++) {
-        if ([self probeDbusPort:fridaDbusPorts[i]]) {
-            return YES;
-        }
-    }
-    return NO;
-}
-
-- (BOOL)probeDbusPort:(int)port {
-    int fd = socket(AF_INET, SOCK_STREAM, 0);
-    if (fd < 0) {
-        return NO;
-    }
-
-    struct timeval timeout;
-    timeout.tv_sec = 0;
-    timeout.tv_usec = 40000;
-    setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout));
-    setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &timeout, sizeof(timeout));
-
-    struct sockaddr_in addr;
-    memset(&addr, 0, sizeof(addr));
-    addr.sin_family = AF_INET;
-    addr.sin_port = htons(port);
-    addr.sin_addr.s_addr = inet_addr("127.0.0.1");
-
-    if (connect(fd, (struct sockaddr *)&addr, sizeof(addr)) != 0) {
-        close(fd);
-        return NO;
-    }
-
-    const char *msg = "\0AUTH\r\n";
-    send(fd, msg, strlen(msg), 0);
-
-    char buf[64] = {0};
-    ssize_t n = recv(fd, buf, sizeof(buf) - 1, 0);
-    close(fd);
-
-    if (n > 0) {
-        NSString *resp = [[NSString alloc] initWithBytes:buf length:(NSUInteger)n encoding:NSASCIIStringEncoding];
-        return [resp containsString:@"REJECT"];
-    }
-
     return NO;
 }
 
@@ -921,6 +1021,100 @@
     NSArray* ports = @[@(22), @(23), @(4444), @(5555), @(6666), @(7777), @(8888), @(9999)];
     for (NSNumber* port in ports) {
         if ([self isPortOpen:[port intValue]]) {
+            return YES;
+        }
+    }
+    return NO;
+}
+
+- (NSArray<NSString*>*)runtimeInstrumentationTokens {
+    return @[
+        @"frida",
+        @"gum-js",
+        @"gumjs",
+        @"gadget",
+        @"frida-gadget",
+        @"linjector",
+        @"objection",
+        @"cycript",
+        @"substrate",
+        @"substitute",
+        @"ellekit",
+        @"libhooker"
+    ];
+}
+
+- (BOOL)checkSuspiciousLoadedImages {
+    NSArray<NSString*>* tokens = [self runtimeInstrumentationTokens];
+    uint32_t imageCount = _dyld_image_count();
+
+    for (uint32_t i = 0; i < imageCount; i++) {
+        const char* imageName = _dyld_get_image_name(i);
+        if (imageName == NULL) {
+            continue;
+        }
+
+        NSString* image = [@(imageName) lowercaseString];
+        for (NSString* token in tokens) {
+            if ([image containsString:token]) {
+                return YES;
+            }
+        }
+    }
+
+    return NO;
+}
+
+- (BOOL)checkSuspiciousThreadNames {
+    NSArray<NSString*>* tokens = @[
+        @"frida",
+        @"gum-js",
+        @"gmain",
+        @"gdbus",
+        @"linjector",
+        @"objection"
+    ];
+    thread_act_array_t threads;
+    mach_msg_type_number_t threadCount = 0;
+
+    if (task_threads(mach_task_self(), &threads, &threadCount) != KERN_SUCCESS) {
+        return NO;
+    }
+
+    BOOL found = NO;
+    for (mach_msg_type_number_t i = 0; i < threadCount; i++) {
+        pthread_t pthread = pthread_from_mach_thread_np(threads[i]);
+        if (pthread == NULL) {
+            continue;
+        }
+
+        char threadName[128] = {0};
+        if (pthread_getname_np(pthread, threadName, sizeof(threadName)) != 0 || threadName[0] == '\0') {
+            continue;
+        }
+
+        NSString* name = [@(threadName) lowercaseString];
+        for (NSString* token in tokens) {
+            if ([name containsString:token]) {
+                found = YES;
+                break;
+            }
+        }
+
+        if (found) {
+            break;
+        }
+    }
+
+    vm_deallocate(mach_task_self(), (vm_address_t)threads, threadCount * sizeof(thread_t));
+    return found;
+}
+
+- (BOOL)checkFridaPorts {
+    NSArray* ports = @[@(27042), @(27043)];
+    for (NSNumber* port in ports) {
+        if ([self isPortOpen:[port intValue]]) {
+            NSLog(@"EnhancedIRoot Frida port open: %@", port);
             return YES;
         }
     }
@@ -1086,7 +1280,21 @@
         "/data/local/tmp/frida-gadget.so",
         "/data/local/tmp/gum-js-loop.so",
         "/data/local/tmp/gmain.so",
-        "/data/local/tmp/linjector.so"
+        "/data/local/tmp/linjector.so",
+        "/usr/sbin/frida-server",
+        "/usr/bin/frida-server",
+        "/usr/local/bin/frida-server",
+        "/usr/lib/frida/frida-agent.dylib",
+        "/usr/lib/frida/frida-gadget.dylib",
+        "/var/jb/usr/sbin/frida-server",
+        "/var/jb/usr/bin/frida-server",
+        "/var/jb/usr/local/bin/frida-server",
+        "/var/jb/usr/lib/frida/frida-agent.dylib",
+        "/var/jb/usr/lib/frida/frida-gadget.dylib",
+        "/private/var/root/frida-server",
+        "/private/var/mobile/frida-server",
+        "/private/var/tmp/frida-server",
+        "/tmp/frida-server"
     };
     
     for (int i = 0; i < sizeof(artifacts) / sizeof(artifacts[0]); i++) {

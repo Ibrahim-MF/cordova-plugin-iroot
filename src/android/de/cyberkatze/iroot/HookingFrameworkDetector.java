@@ -2,7 +2,6 @@ package de.cyberkatze.iroot;
 
 import android.content.Context;
 import android.content.pm.PackageManager;
-import android.os.Build;
 import android.util.Log;
 
 import org.json.JSONArray;
@@ -18,11 +17,14 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Locale;
 import java.util.Set;
-import java.util.regex.Pattern;
 
 public class HookingFrameworkDetector {
     private static final String TAG = "HookingFrameworkDetector";
+    private static final int RISK_THRESHOLD = 70;
+    private static final int SCORE_HIGH_CONFIDENCE = 90;
+    private static final int SCORE_MEDIUM_CONFIDENCE = 50;
     private final Context context;
     private final Set<String> fridaPackages;
     private final Set<String> xposedPackages;
@@ -52,7 +54,11 @@ public class HookingFrameworkDetector {
             "com.sensepost.hiddentearstandard",
             "com.sensepost.hiddentearultimate",
             "com.sensepost.hiddentearprofessional",
-            "com.sensepost.hiddentearenterprise"
+            "com.sensepost.hiddentearenterprise",
+            "re.frida.server",
+            "re.frida.gadget",
+            "com.frida.server",
+            "com.frida.gadget"
         ));
 
         // Xposed packages
@@ -74,7 +80,14 @@ public class HookingFrameworkDetector {
             "/data/local/tmp/frida-gadget",
             "/data/local/tmp/gum-js-loop",
             "/data/local/tmp/gmain",
-            "/data/local/tmp/linjector"
+            "/data/local/tmp/linjector",
+            "/data/local/tmp/frida",
+            "/data/local/tmp/re.frida",
+            "/data/local/tmp/frida-agent.so",
+            "/data/local/tmp/frida-gadget.so",
+            "/data/local/tmp/libfrida-gadget.so",
+            "/data/local/tmp/libfrida-agent.so",
+            "/data/local/tmp/libgum-js-loop.so"
         ));
 
         // Xposed paths
@@ -88,7 +101,7 @@ public class HookingFrameworkDetector {
 
         // Frida ports
         this.fridaPorts = new HashSet<>(Arrays.asList(
-            27042, 27043, 27044, 27045, 27046, 27047, 27048, 27049, 27050
+            27042, 27043
         ));
 
         // Objection paths
@@ -120,48 +133,66 @@ public class HookingFrameworkDetector {
 
     public JSONObject check() throws JSONException {
         JSONObject result = new JSONObject();
-        boolean isHooked = false;
         List<String> detectedIssues = new ArrayList<>();
+        int riskScore = 0;
 
-        // Check for Frida
-        if (checkFrida()) {
-            isHooked = true;
-            detectedIssues.add("frida_detected");
+        if (checkFridaPackages()) {
+            riskScore = addIssue(detectedIssues, "frida_package_found", riskScore, SCORE_HIGH_CONFIDENCE);
         }
 
-        // Check for Xposed
+        if (checkFridaArtifacts()) {
+            riskScore = addIssue(detectedIssues, "frida_artifact_found", riskScore, SCORE_HIGH_CONFIDENCE);
+        }
+
+        if (checkFridaPorts()) {
+            riskScore = addIssue(detectedIssues, "frida_ports", riskScore, SCORE_HIGH_CONFIDENCE);
+        }
+
+        if (checkFridaMemoryMaps()) {
+            riskScore = addIssue(detectedIssues, "frida_library_loaded", riskScore, SCORE_HIGH_CONFIDENCE);
+        }
+
+        if (checkFridaThreadNames()) {
+            riskScore = addIssue(detectedIssues, "frida_thread_found", riskScore, SCORE_HIGH_CONFIDENCE);
+        }
+
+        if (checkFridaUnixSockets()) {
+            riskScore = addIssue(detectedIssues, "frida_socket_found", riskScore, SCORE_HIGH_CONFIDENCE);
+        }
+
         if (checkXposed()) {
-            isHooked = true;
-            detectedIssues.add("xposed_detected");
+            riskScore = addIssue(detectedIssues, "xposed_detected", riskScore, SCORE_MEDIUM_CONFIDENCE);
         }
 
-        // Check for Objection
         if (checkObjection()) {
-            isHooked = true;
-            detectedIssues.add("objection_detected");
+            riskScore = addIssue(detectedIssues, "objection_detected", riskScore, SCORE_MEDIUM_CONFIDENCE);
         }
 
-        // Check for suspicious processes
         if (checkSuspiciousProcesses()) {
-            isHooked = true;
-            detectedIssues.add("suspicious_processes");
+            riskScore = addIssue(detectedIssues, "suspicious_processes", riskScore, SCORE_MEDIUM_CONFIDENCE);
         }
 
-        // Check for suspicious libraries
         if (checkSuspiciousLibraries()) {
-            isHooked = true;
-            detectedIssues.add("suspicious_libraries");
+            riskScore = addIssue(detectedIssues, "suspicious_libraries", riskScore, SCORE_MEDIUM_CONFIDENCE);
         }
 
-        // Check for suspicious memory regions
         if (checkSuspiciousMemoryRegions()) {
-            isHooked = true;
-            detectedIssues.add("suspicious_memory_regions");
+            riskScore = addIssue(detectedIssues, "suspicious_memory_regions", riskScore, SCORE_MEDIUM_CONFIDENCE);
         }
 
-        result.put("isHooked", isHooked);
+        result.put("isHooked", riskScore >= RISK_THRESHOLD);
+        result.put("riskScore", riskScore);
+        result.put("riskThreshold", RISK_THRESHOLD);
         result.put("detectedIssues", new JSONArray(detectedIssues));
         return result;
+    }
+
+    private int addIssue(List<String> detectedIssues, String issue, int currentScore, int issueScore) {
+        if (!detectedIssues.contains(issue)) {
+            detectedIssues.add(issue);
+            return Math.min(100, currentScore + issueScore);
+        }
+        return currentScore;
     }
 
     private boolean verifyIntegrity() {
@@ -204,101 +235,86 @@ public class HookingFrameworkDetector {
 
     private native boolean nativeCheckIntegrity();
 
-    private boolean checkFrida() {
-        // Verify code integrity first
-        // if (!verifyIntegrity() || !checkNativeIntegrity()) {
-        //     return true; // Integrity check failed, assume tampering
-        // }
-
-        // Add timing-based checks
-        long startTime = System.nanoTime();
-        
-        // Check for Frida packages with extended detection
+    private boolean checkFridaPackages() {
         PackageManager pm = context.getPackageManager();
         for (String packageName : fridaPackages) {
             try {
                 pm.getPackageInfo(packageName, PackageManager.GET_ACTIVITIES);
+                Log.d(TAG, "Found Frida package: " + packageName);
                 return true;
             } catch (PackageManager.NameNotFoundException e) {
                 // Package not found, continue checking
             }
         }
-
-        // Check for Frida files with extended paths and content analysis
-        for (String path : fridaPaths) {
-            File file = new File(path);
-            if (file.exists()) {
-                // Check file content for Frida signatures
-                try {
-                    BufferedReader reader = new BufferedReader(new FileReader(file));
-                    String line;
-                    while ((line = reader.readLine()) != null) {
-                        if (line.contains("frida") || line.contains("gum-js") || line.contains("gadget")) {
-                            reader.close();
-                            return true;
-                        }
-                    }
-                    reader.close();
-                } catch (IOException e) {
-                    Log.e(TAG, "Error reading file: " + e.getMessage());
-                }
-            }
-        }
-
-        // Check for Frida ports with extended range and connection testing
-        try {
-            Process process = Runtime.getRuntime().exec("netstat -tuln");
-            BufferedReader reader = new BufferedReader(new InputStreamReader(process.getInputStream()));
-            String line;
-            while ((line = reader.readLine()) != null) {
-                // Check for ports in extended range
-                for (int port = 27000; port <= 28000; port++) {
-                    if (line.contains(":" + port)) {
-                        // Test connection to port
-                        if (testPortConnection(port)) {
-                            return true;
-                        }
-                    }
-                }
-            }
-        } catch (IOException e) {
-            Log.e(TAG, "Error checking Frida ports: " + e.getMessage());
-        }
-
-        // Enhanced memory map analysis
-        if (checkMemoryMaps()) {
-            return true;
-        }
-
-        // Check for Frida environment variables with pattern matching
-        if (checkFridaEnvironment()) {
-            return true;
-        }
-
-        // Check for Frida processes with extended detection
-        if (checkFridaProcesses()) {
-            return true;
-        }
-
-        // Check for Frida artifacts with content analysis
-        if (checkFridaArtifacts()) {
-            return true;
-        }
-
-        // Check for suspicious memory patterns
-        if (checkSuspiciousMemoryPatterns()) {
-            return true;
-        }
-
-        long endTime = System.nanoTime();
-        long duration = endTime - startTime;
-        
-        // If checks took too long, might indicate debugging
-        if (duration > 2000000000) { // 2 sec
-            return true;
-        }
-        
         return false;
+    }
+
+    private boolean checkFridaPorts() {
+        return hasListeningPort("/proc/net/tcp", fridaPorts) || hasListeningPort("/proc/net/tcp6", fridaPorts);
+    }
+
+    private boolean checkFridaMemoryMaps() {
+        return containsAny(readTextFile("/proc/self/maps"), Arrays.asList(
+            "frida",
+            "re.frida",
+            "gum-js",
+            "gumjs",
+            "libgum",
+            "gadget",
+            "libfrida",
+            "libfrida-gadget",
+            "linjector"
+        ));
+    }
+
+    private boolean checkFridaThreadNames() {
+        File taskDir = new File("/proc/self/task");
+        File[] taskFiles = taskDir.listFiles();
+        if (taskFiles == null) {
+            return false;
+        }
+
+        List<String> threadTokens = Arrays.asList(
+            "frida",
+            "gum-js-loop",
+            "gumjs",
+            "gmain",
+            "gdbus",
+            "linjector"
+        );
+
+        for (File taskFile : taskFiles) {
+            String threadName = readTextFile(taskFile.getAbsolutePath() + "/comm");
+            if (containsAny(threadName, threadTokens)) {
+                Log.d(TAG, "Found Frida thread: " + threadName.trim());
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private boolean checkFridaUnixSockets() {
+        return containsAny(readTextFile("/proc/net/unix"), Arrays.asList(
+            "frida",
+            "re.frida",
+            "frida-server",
+            "frida-agent",
+            "frida-gadget",
+            "gum-js-loop",
+            "linjector"
+        ));
+    }
+
+    private boolean checkFrida() {
+        return checkFridaPackages()
+            || checkFridaArtifacts()
+            || checkFridaPorts()
+            || checkFridaMemoryMaps()
+            || checkFridaThreadNames()
+            || checkFridaUnixSockets()
+            || checkFridaEnvironment()
+            || checkFridaProcesses()
+            || checkSuspiciousMemoryPatterns();
     }
 
     private boolean testPortConnection(int port) {
@@ -312,10 +328,52 @@ public class HookingFrameworkDetector {
         }
     }
 
+    private boolean hasListeningPort(String procNetPath, Set<Integer> ports) {
+        String content = readTextFile(procNetPath);
+        String[] lines = content.split("\\n");
+        for (int port : ports) {
+            String hexPort = String.format(Locale.US, ":%04X", port);
+            for (String line : lines) {
+                String[] parts = line.trim().split("\\s+");
+                if (parts.length > 3
+                    && parts[1].toUpperCase(Locale.US).endsWith(hexPort)
+                    && "0A".equals(parts[3])) {
+                    Log.d(TAG, "Found listening port in " + procNetPath + ": " + port);
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+
+    private String readTextFile(String path) {
+        StringBuilder content = new StringBuilder();
+        try {
+            BufferedReader reader = new BufferedReader(new FileReader(path));
+            String line;
+            while ((line = reader.readLine()) != null) {
+                content.append(line).append('\n');
+            }
+            reader.close();
+        } catch (IOException e) {
+            Log.e(TAG, "Error reading " + path + ": " + e.getMessage());
+        }
+        return content.toString();
+    }
+
+    private boolean containsAny(String content, List<String> tokens) {
+        String lowerContent = content.toLowerCase(Locale.US);
+        for (String token : tokens) {
+            if (lowerContent.contains(token.toLowerCase(Locale.US))) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     private boolean checkMemoryMaps() {
         try {
-            Process process = Runtime.getRuntime().exec("cat /proc/self/maps");
-            BufferedReader reader = new BufferedReader(new InputStreamReader(process.getInputStream()));
+            BufferedReader reader = new BufferedReader(new FileReader("/proc/self/maps"));
             String line;
             Set<String> suspiciousPatterns = new HashSet<>(Arrays.asList(
                 "frida", "gum-js", "gmain", "linjector", "re.frida", "gadget",
@@ -358,8 +416,7 @@ public class HookingFrameworkDetector {
 
     private boolean checkSuspiciousMemoryPatterns() {
         try {
-            Process process = Runtime.getRuntime().exec("cat /proc/self/maps");
-            BufferedReader reader = new BufferedReader(new InputStreamReader(process.getInputStream()));
+            BufferedReader reader = new BufferedReader(new FileReader("/proc/self/maps"));
             String line;
             while ((line = reader.readLine()) != null) {
                 // Check for suspicious memory patterns
@@ -524,8 +581,7 @@ public class HookingFrameworkDetector {
 
     private boolean checkSuspiciousLibraries() {
         try {
-            Process process = Runtime.getRuntime().exec("cat /proc/self/maps");
-            BufferedReader reader = new BufferedReader(new InputStreamReader(process.getInputStream()));
+            BufferedReader reader = new BufferedReader(new FileReader("/proc/self/maps"));
             String line;
             while ((line = reader.readLine()) != null) {
                 if (line.contains("frida") || 
@@ -544,8 +600,7 @@ public class HookingFrameworkDetector {
 
     private boolean checkSuspiciousMemoryRegions() {
         try {
-            Process process = Runtime.getRuntime().exec("cat /proc/self/maps");
-            BufferedReader reader = new BufferedReader(new InputStreamReader(process.getInputStream()));
+            BufferedReader reader = new BufferedReader(new FileReader("/proc/self/maps"));
             String line;
             while ((line = reader.readLine()) != null) {
                 // Check for RWX memory regions (common in hooking frameworks)
@@ -735,4 +790,4 @@ public class HookingFrameworkDetector {
 
         return false;
     }
-} 
+}

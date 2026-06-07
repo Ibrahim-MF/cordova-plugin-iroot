@@ -14,10 +14,15 @@ import java.io.FileReader;
 import java.io.IOException;
 import java.io.InputStreamReader;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
+import java.util.Locale;
 
 public class DebuggerDetector {
     private static final String TAG = "DebuggerDetector";
+    private static final int RISK_THRESHOLD = 70;
+    private static final int SCORE_HIGH_CONFIDENCE = 90;
+    private static final int SCORE_MEDIUM_CONFIDENCE = 50;
     private final Context context;
 
     public DebuggerDetector(Context context) {
@@ -26,42 +31,48 @@ public class DebuggerDetector {
 
     public JSONObject check() throws JSONException {
         JSONObject result = new JSONObject();
-        boolean isDebuggerAttached = false;
         List<String> detectedIssues = new ArrayList<>();
+        int riskScore = 0;
 
         // Check for debugger using Android's Debug class
         if (checkDebuggerConnected()) {
-            isDebuggerAttached = true;
             detectedIssues.add("debugger_connected");
+            riskScore = addRisk(riskScore, SCORE_HIGH_CONFIDENCE);
         }
 
         // Check for debugger using TracerPid
         if (checkTracerPid()) {
-            isDebuggerAttached = true;
             detectedIssues.add("tracer_pid_found");
+            riskScore = addRisk(riskScore, SCORE_HIGH_CONFIDENCE);
         }
 
         // Check for JDWP thread
         if (checkJdwpThread()) {
-            isDebuggerAttached = true;
             detectedIssues.add("jdwp_thread_found");
+            riskScore = addRisk(riskScore, SCORE_MEDIUM_CONFIDENCE);
         }
 
         // Check for timing anomalies
         if (checkTimingAnomalies()) {
-            isDebuggerAttached = true;
             detectedIssues.add("timing_anomalies");
+            riskScore = addRisk(riskScore, SCORE_MEDIUM_CONFIDENCE);
         }
 
         // Check for debugger ports
         if (checkDebuggerPorts()) {
-            isDebuggerAttached = true;
             detectedIssues.add("debugger_ports_found");
+            riskScore = addRisk(riskScore, SCORE_MEDIUM_CONFIDENCE);
         }
 
-        result.put("isDebuggerAttached", isDebuggerAttached);
+        result.put("isDebuggerAttached", riskScore >= RISK_THRESHOLD);
+        result.put("riskScore", riskScore);
+        result.put("riskThreshold", RISK_THRESHOLD);
         result.put("detectedIssues", new JSONArray(detectedIssues));
         return result;
+    }
+
+    private int addRisk(int currentScore, int issueScore) {
+        return Math.min(100, currentScore + issueScore);
     }
 
     private boolean checkDebuggerConnected() {
@@ -119,29 +130,40 @@ public class DebuggerDetector {
     }
 
     private boolean checkDebuggerPorts() {
-        try {
-            Process process = Runtime.getRuntime().exec("netstat -tuln");
-            BufferedReader reader = new BufferedReader(new InputStreamReader(process.getInputStream()));
-            String line;
-            while ((line = reader.readLine()) != null) {
-                // Check for common debugger ports
-                if (line.contains(":8600") || // Android Studio debugger
-                    line.contains(":8601") || // Android Studio debugger
-                    line.contains(":8602") || // Android Studio debugger
-                    line.contains(":8700") || // Android Studio debugger
-                    line.contains(":8701") || // Android Studio debugger
-                    line.contains(":8702") || // Android Studio debugger
-                    line.contains(":5037") || // ADB
-                    line.contains(":8000") || // Common debug port
-                    line.contains(":8001") || // Common debug port
-                    line.contains(":8002")) { // Common debug port
+        List<Integer> debuggerPorts = Arrays.asList(8600, 8601, 8602, 8700, 8701, 8702, 5037, 8000, 8001, 8002);
+        return hasListeningPort("/proc/net/tcp", debuggerPorts) || hasListeningPort("/proc/net/tcp6", debuggerPorts);
+    }
+
+    private boolean hasListeningPort(String procNetPath, List<Integer> ports) {
+        String[] lines = readTextFile(procNetPath).split("\\n");
+        for (int port : ports) {
+            String hexPort = String.format(Locale.US, ":%04X", port);
+            for (String line : lines) {
+                String[] parts = line.trim().split("\\s+");
+                if (parts.length > 3
+                    && parts[1].toUpperCase(Locale.US).endsWith(hexPort)
+                    && "0A".equals(parts[3])) {
+                    Log.d(TAG, "Found debugger port in " + procNetPath + ": " + port);
                     return true;
                 }
             }
-        } catch (IOException e) {
-            Log.e(TAG, "Error checking debugger ports: " + e.getMessage());
         }
         return false;
+    }
+
+    private String readTextFile(String path) {
+        StringBuilder content = new StringBuilder();
+        try {
+            BufferedReader reader = new BufferedReader(new FileReader(path));
+            String line;
+            while ((line = reader.readLine()) != null) {
+                content.append(line).append('\n');
+            }
+            reader.close();
+        } catch (IOException e) {
+            Log.e(TAG, "Error reading " + path + ": " + e.getMessage());
+        }
+        return content.toString();
     }
 
     // Additional debugger detection methods
@@ -190,4 +212,4 @@ public class DebuggerDetector {
         }
         return false;
     }
-} 
+}

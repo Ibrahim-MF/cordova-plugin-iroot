@@ -91,6 +91,9 @@ interface EnhancedIRootSignals {
     isRooted: boolean;
     isEmulator: boolean;
     isHooked: boolean;
+    isTampered?: boolean;
+    riskScore?: number;
+    riskThreshold?: number;
     signals: EnhancedIRootSignal[];
 }
 
