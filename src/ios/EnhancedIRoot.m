@@ -161,8 +161,7 @@ static void EnhancedIRootDyldImageAdded(const struct mach_header* header, intptr
         @"/var/jb/etc/apt",
         @"/var/jb/var/lib/apt",
         @"/var/jb/var/lib/dpkg",
-        @"/procursus",
-        @"/private/preboot"
+        @"/procursus"
     ];
     
     // Initialize jailbreak binaries
@@ -605,11 +604,13 @@ static void EnhancedIRootDyldImageAdded(const struct mach_header* header, intptr
     NSMutableDictionary* result = [NSMutableDictionary dictionary];
     NSMutableArray* detectedIssues = [NSMutableArray array];
     BOOL isJailbroken = NO;
+    BOOL hasStrongJailbreakSignal = NO;
     
     // Check for jailbreak paths
     for (NSString* path in self.jailbreakPaths) {
         if ([[NSFileManager defaultManager] fileExistsAtPath:path]) {
             isJailbroken = YES;
+            hasStrongJailbreakSignal = YES;
             [detectedIssues addObject:@"jailbreak_path_found"];
             break;
         }
@@ -619,6 +620,7 @@ static void EnhancedIRootDyldImageAdded(const struct mach_header* header, intptr
     for (NSString* binary in self.jailbreakBinaries) {
         if ([[NSFileManager defaultManager] fileExistsAtPath:binary]) {
             isJailbroken = YES;
+            hasStrongJailbreakSignal = YES;
             [detectedIssues addObject:@"jailbreak_binary_found"];
             break;
         }
@@ -628,6 +630,7 @@ static void EnhancedIRootDyldImageAdded(const struct mach_header* header, intptr
     for (NSString* scheme in self.jailbreakSchemes) {
         if ([[UIApplication sharedApplication] canOpenURL:[NSURL URLWithString:[scheme stringByAppendingString:@"://"]]]) {
             isJailbroken = YES;
+            hasStrongJailbreakSignal = YES;
             [detectedIssues addObject:@"jailbreak_scheme_found"];
             break;
         }
@@ -636,13 +639,18 @@ static void EnhancedIRootDyldImageAdded(const struct mach_header* header, intptr
     // Check for sandbox integrity
     if (![self checkSandboxIntegrity]) {
         isJailbroken = YES;
+        hasStrongJailbreakSignal = YES;
         [detectedIssues addObject:@"sandbox_integrity_compromised"];
     }
     
-    // Check for suspicious environment variables
+    // Check for suspicious environment variables.
+    // This can happen in instrumented/debug launch contexts, so do not treat it as
+    // a standalone jailbreak indicator without at least one stronger signal.
     if ([self checkSuspiciousEnvironmentVariables]) {
-        isJailbroken = YES;
         [detectedIssues addObject:@"suspicious_environment_variables"];
+        if (hasStrongJailbreakSignal) {
+            isJailbroken = YES;
+        }
     }
     
     result[@"isJailbroken"] = @(isJailbroken);
