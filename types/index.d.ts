@@ -67,3 +67,78 @@ interface IRootPlugin {
 }
 
 declare var IRoot: IRootPlugin;
+
+/**
+ * A single detection signal emitted by the native, syscall-backed engine.
+ */
+interface EnhancedIRootSignal {
+    /** Stable signal code, e.g. "ROOT_SU_BINARY", "EMULATOR_QEMU_FILES", "HOOK_FRIDA_MAPS". */
+    code: string;
+    /** High-level category: "ROOT" | "EMULATOR" | "HOOK" | "DEBUGGER" | "TAMPER". */
+    category: string;
+    /** Short evidence/source hint. */
+    evidence: string;
+}
+
+/**
+ * Consolidated, hook-resistant verdict returned by EnhancedIRoot.getSignals().
+ * All values originate from the native syscall layer, so they remain truthful
+ * even when the Java/libc layer is hooked. Prefer this over IRoot.isRooted as
+ * the security gate.
+ */
+interface EnhancedIRootSignals {
+    isCompromised: boolean;
+    isRooted: boolean;
+    isEmulator: boolean;
+    isHooked: boolean;
+    isTampered?: boolean;
+    riskScore?: number;
+    riskThreshold?: number;
+    signals: EnhancedIRootSignal[];
+}
+
+/**
+ * Enhanced Runtime Application Self-Protection (RASP) API.
+ * Available on the global "EnhancedIRoot" object after the deviceready event.
+ * Works on both Android and iOS.
+ */
+interface EnhancedIRootPlugin {
+    /** Enable/disable individual checks. */
+    configure(options: Record<string, boolean>): Promise<void>;
+
+    checkDeviceIntegrity(): Promise<any>;
+
+    /** Android root check (native-backed). */
+    checkRoot(): Promise<any>;
+
+    /** iOS jailbreak check. */
+    checkJailbreak(): Promise<any>;
+
+    checkHookingFrameworks(): Promise<any>;
+
+    checkDebugger(): Promise<any>;
+
+    checkEmulator(): Promise<any>;
+
+    checkAppIntegrity(): Promise<any>;
+
+    /** Start periodic monitoring. Note: events are unreliable under active hooking; prefer polling getSignals(). */
+    startMonitoring(options?: { interval?: number }): Promise<void>;
+
+    stopMonitoring(): Promise<void>;
+
+    /** Detailed threat report (root/emulator/hooking/integrity + nativeSignals). */
+    getThreatReport(): Promise<any>;
+
+    /**
+     * Consolidated, hook-resistant verdict computed from the native syscall layer.
+     * Use this as the primary security gate.
+     */
+    getSignals(): Promise<EnhancedIRootSignals>;
+
+    on(eventName: string, callback: (data: any) => void): void;
+
+    off(eventName: string, callback: (data: any) => void): void;
+}
+
+declare var EnhancedIRoot: EnhancedIRootPlugin;
