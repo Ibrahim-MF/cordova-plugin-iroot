@@ -19,6 +19,7 @@
 #import <arpa/inet.h>
 #import <pthread.h>
 #import <math.h>
+#import <stdatomic.h>
 
 @interface EnhancedIRoot ()
 
@@ -31,6 +32,9 @@
 @property (nonatomic, strong) NSArray *objectionArtifacts;
 @property (nonatomic, strong) NSData *integrityChecksum;
 @property (nonatomic, strong) NSTimer *integrityTimer;
+@property (nonatomic, assign) BOOL backgroundFridaDbusHit;
+@property (nonatomic, assign) BOOL backgroundFridaScanStarted;
+@property (nonatomic, assign) dispatch_semaphore_t fridaScanSemaphore;
 @property (nonatomic, strong) NSMutableDictionary<NSString*, NSValue*> *runtimeMethodIMPs;
 @property (nonatomic, strong) NSMutableDictionary<NSString*, NSData*> *runtimeMethodChecksums;
 
@@ -95,7 +99,8 @@ static void EnhancedIRootDyldImageAdded(const struct mach_header* header, intptr
     
     // Initialize integrity checksum
     self.integrityChecksum = [self calculateIntegrityChecksum];
-    
+    self.fridaScanSemaphore = dispatch_semaphore_create(0);
+
     // Start periodic integrity checks
     self.integrityTimer = [NSTimer scheduledTimerWithTimeInterval:30.0
                                                          target:self
@@ -111,7 +116,7 @@ static void EnhancedIRootDyldImageAdded(const struct mach_header* header, intptr
 
     [self initializeRuntimeIntegrityBaselines];
     _dyld_register_func_for_add_image(EnhancedIRootDyldImageAdded);
-    
+
     // Initialize jailbreak detection paths
     self.jailbreakPaths = @[
         @"/Applications/Cydia.app",
@@ -395,13 +400,22 @@ static void EnhancedIRootDyldImageAdded(const struct mach_header* header, intptr
             BOOL isEmulator = [emulator[@"isEmulator"] boolValue];
             BOOL hooked = [hooking[@"isHooked"] boolValue] || [debugger[@"isDebuggerAttached"] boolValue];
             BOOL tampered = [integrity[@"isTampered"] boolValue];
+            BOOL isCompromised = rooted || isEmulator || hooked || tampered;
+
+            if (!isCompromised) {
+                [self waitForBackgroundFridaScan:8.0];
+                if ([self checkFridaPorts]) {
+                    hooked = YES;
+                    isCompromised = YES;
+                }
+            }
 
             NSMutableDictionary* result = [NSMutableDictionary dictionary];
             result[@"isRooted"] = @(rooted);
             result[@"isEmulator"] = @(isEmulator);
             result[@"isHooked"] = @(hooked);
             result[@"isTampered"] = @(tampered);
-            result[@"isCompromised"] = @(rooted || isEmulator || hooked || tampered);
+            result[@"isCompromised"] = @(isCompromised);
             if (hooking[@"riskScore"] != nil) {
                 result[@"riskScore"] = hooking[@"riskScore"];
             }
@@ -1111,14 +1125,118 @@ static void EnhancedIRootDyldImageAdded(const struct mach_header* header, intptr
 }
 
 - (BOOL)checkFridaPorts {
-    NSArray* ports = @[@(27042), @(27043)];
-    for (NSNumber* port in ports) {
-        if ([self isPortOpen:[port intValue]]) {
-            NSLog(@"EnhancedIRoot Frida port open: %@", port);
+    for (NSNumber* port in @[@(27042), @(27043)]) {
+        if ([self probeDbusPort:[port intValue]]) {
             return YES;
         }
     }
-    return NO;
+    return self.backgroundFridaDbusHit;
+}
+
+- (void)runBackgroundDbusPortScanOnce {
+    @synchronized (self) {
+        if (self.backgroundFridaScanStarted) {
+            return;
+        }
+        self.backgroundFridaScanStarted = YES;
+    }
+
+    dispatch_async(dispatch_get_global_queue(QOS_CLASS_BACKGROUND, 0), ^{
+        BOOL hit = [self scanDbusPortRangeParallelFrom:1024 to:65535];
+        if (hit) {
+            self.backgroundFridaDbusHit = YES;
+        }
+        dispatch_semaphore_signal(self.fridaScanSemaphore);
+    });
+}
+
+- (void)waitForBackgroundFridaScan:(NSTimeInterval)timeoutSeconds {
+    if (self.backgroundFridaDbusHit) {
+        return;
+    }
+    [self runBackgroundDbusPortScanOnce];
+    dispatch_semaphore_wait(
+        self.fridaScanSemaphore,
+        dispatch_time(DISPATCH_TIME_NOW, (int64_t)(timeoutSeconds * NSEC_PER_SEC))
+    );
+}
+
+- (BOOL)probeDbusPort:(int)port {
+    int fd = socket(AF_INET, SOCK_STREAM, 0);
+    if (fd < 0) {
+        return NO;
+    }
+
+    struct timeval tv = {0, 40000};
+    setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
+    setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof(tv));
+
+    struct sockaddr_in addr;
+    memset(&addr, 0, sizeof(addr));
+    addr.sin_family = AF_INET;
+    addr.sin_port = htons(port);
+    addr.sin_addr.s_addr = inet_addr("127.0.0.1");
+
+    if (connect(fd, (struct sockaddr*)&addr, sizeof(addr)) != 0) {
+        close(fd);
+        return NO;
+    }
+
+    const char authMessage[] = "\0AUTH\r\n";
+    send(fd, authMessage, sizeof(authMessage) - 1, 0);
+
+    char buffer[64];
+    ssize_t bytesRead = recv(fd, buffer, sizeof(buffer), 0);
+    close(fd);
+
+    if (bytesRead <= 0) {
+        return NO;
+    }
+
+    NSString* response = [[NSString alloc] initWithBytes:buffer length:(NSUInteger)bytesRead encoding:NSASCIIStringEncoding];
+    return response != nil && [response containsString:@"REJECT"];
+}
+
+- (BOOL)scanDbusPortRangeParallelFrom:(int)startPort to:(int)endPort {
+    if (startPort > endPort) {
+        return NO;
+    }
+
+    static const int workerCount = 8;
+    atomic_bool found = false;
+    int chunkSize = (endPort - startPort + 1 + workerCount - 1) / workerCount;
+    if (chunkSize < 1) {
+        chunkSize = 1;
+    }
+
+    dispatch_queue_t queue = dispatch_get_global_queue(QOS_CLASS_BACKGROUND, 0);
+    dispatch_group_t group = dispatch_group_create();
+
+    for (int worker = 0; worker < workerCount; worker++) {
+        int chunkStart = startPort + (worker * chunkSize);
+        if (chunkStart > endPort) {
+            break;
+        }
+        int chunkEnd = MIN(endPort, chunkStart + chunkSize - 1);
+
+        dispatch_group_async(group, queue, ^{
+            for (int port = chunkStart; port <= chunkEnd; port++) {
+                if (atomic_load(&found)) {
+                    return;
+                }
+                if (port == 27042 || port == 27043) {
+                    continue;
+                }
+                if ([self probeDbusPort:port]) {
+                    atomic_store(&found, true);
+                    return;
+                }
+            }
+        });
+    }
+
+    dispatch_group_wait(group, dispatch_time(DISPATCH_TIME_NOW, 12 * NSEC_PER_SEC));
+    return atomic_load(&found);
 }
 
 - (BOOL)isPortOpen:(int)port {

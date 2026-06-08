@@ -210,6 +210,10 @@ public class EnhancedIRoot extends CordovaPlugin {
                 // here — it runs Runtime.exec("mount") and duplicate native scans that
                 // can block for 30+ seconds on emulators.
                 JSONArray signals = SignalCollector.collect();
+                if (!isCompromisedFromSignals(signals)) {
+                    FridaDetector.awaitBackgroundScan();
+                    signals = SignalCollector.collect();
+                }
                 boolean rooted = hasCategory(signals, "ROOT");
                 boolean emulator = hasCategory(signals, "EMULATOR");
                 boolean hooked = hasCategory(signals, "HOOK") || hasCategory(signals, "DEBUGGER");
@@ -327,6 +331,13 @@ public class EnhancedIRoot extends CordovaPlugin {
         result.put(ROOTED_KEY, rooted);
         result.put("hardenedSignals", rootSignals);
         return result;
+    }
+
+    private boolean isCompromisedFromSignals(JSONArray signals) {
+        return hasCategory(signals, "ROOT")
+                || hasCategory(signals, "EMULATOR")
+                || hasCategory(signals, "HOOK")
+                || hasCategory(signals, "DEBUGGER");
     }
 
     private boolean hasCategory(JSONArray signals, String category) {
