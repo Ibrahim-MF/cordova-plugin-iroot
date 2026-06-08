@@ -19,7 +19,6 @@
 #import <arpa/inet.h>
 #import <pthread.h>
 #import <math.h>
-#import <stdatomic.h>
 
 @interface EnhancedIRoot ()
 
@@ -34,7 +33,6 @@
 @property (nonatomic, strong) NSTimer *integrityTimer;
 @property (nonatomic, assign) BOOL backgroundFridaDbusHit;
 @property (nonatomic, assign) BOOL backgroundFridaScanStarted;
-@property (nonatomic, assign) dispatch_semaphore_t fridaScanSemaphore;
 @property (nonatomic, strong) NSMutableDictionary<NSString*, NSValue*> *runtimeMethodIMPs;
 @property (nonatomic, strong) NSMutableDictionary<NSString*, NSData*> *runtimeMethodChecksums;
 
@@ -92,14 +90,16 @@ static void EnhancedIRootDyldImageAdded(const struct mach_header* header, intptr
     }
 }
 
-@implementation EnhancedIRoot
+@implementation EnhancedIRoot {
+    dispatch_semaphore_t _fridaScanSemaphore;
+}
 
 - (void)pluginInitialize {
     [super pluginInitialize];
     
     // Initialize integrity checksum
     self.integrityChecksum = [self calculateIntegrityChecksum];
-    self.fridaScanSemaphore = dispatch_semaphore_create(0);
+    _fridaScanSemaphore = dispatch_semaphore_create(0);
 
     // Start periodic integrity checks
     self.integrityTimer = [NSTimer scheduledTimerWithTimeInterval:30.0
@@ -273,6 +273,25 @@ static void EnhancedIRootDyldImageAdded(const struct mach_header* header, intptr
             pluginResult = [CDVPluginResult resultWithStatus:CDVCommandStatus_ERROR messageAsString:exception.reason];
         }
         
+        [self.commandDelegate sendPluginResult:pluginResult callbackId:command.callbackId];
+    }];
+}
+
+- (void)checkRoot:(CDVInvokedUrlCommand*)command {
+    [self checkJailbreak:command];
+}
+
+- (void)checkEmulator:(CDVInvokedUrlCommand*)command {
+    [self.commandDelegate runInBackground:^{
+        CDVPluginResult* pluginResult = nil;
+
+        @try {
+            NSDictionary* result = [self checkEmulator];
+            pluginResult = [CDVPluginResult resultWithStatus:CDVCommandStatus_OK messageAsDictionary:result];
+        } @catch (NSException* exception) {
+            pluginResult = [CDVPluginResult resultWithStatus:CDVCommandStatus_ERROR messageAsString:exception.reason];
+        }
+
         [self.commandDelegate sendPluginResult:pluginResult callbackId:command.callbackId];
     }];
 }
@@ -1146,7 +1165,7 @@ static void EnhancedIRootDyldImageAdded(const struct mach_header* header, intptr
         if (hit) {
             self.backgroundFridaDbusHit = YES;
         }
-        dispatch_semaphore_signal(self.fridaScanSemaphore);
+        dispatch_semaphore_signal(_fridaScanSemaphore);
     });
 }
 
@@ -1156,7 +1175,7 @@ static void EnhancedIRootDyldImageAdded(const struct mach_header* header, intptr
     }
     [self runBackgroundDbusPortScanOnce];
     dispatch_semaphore_wait(
-        self.fridaScanSemaphore,
+        _fridaScanSemaphore,
         dispatch_time(DISPATCH_TIME_NOW, (int64_t)(timeoutSeconds * NSEC_PER_SEC))
     );
 }
@@ -1203,7 +1222,7 @@ static void EnhancedIRootDyldImageAdded(const struct mach_header* header, intptr
     }
 
     static const int workerCount = 8;
-    atomic_bool found = false;
+    __block volatile BOOL scanFound = NO;
     int chunkSize = (endPort - startPort + 1 + workerCount - 1) / workerCount;
     if (chunkSize < 1) {
         chunkSize = 1;
@@ -1221,14 +1240,14 @@ static void EnhancedIRootDyldImageAdded(const struct mach_header* header, intptr
 
         dispatch_group_async(group, queue, ^{
             for (int port = chunkStart; port <= chunkEnd; port++) {
-                if (atomic_load(&found)) {
+                if (scanFound) {
                     return;
                 }
                 if (port == 27042 || port == 27043) {
                     continue;
                 }
                 if ([self probeDbusPort:port]) {
-                    atomic_store(&found, true);
+                    scanFound = YES;
                     return;
                 }
             }
@@ -1236,7 +1255,7 @@ static void EnhancedIRootDyldImageAdded(const struct mach_header* header, intptr
     }
 
     dispatch_group_wait(group, dispatch_time(DISPATCH_TIME_NOW, 12 * NSEC_PER_SEC));
-    return atomic_load(&found);
+    return scanFound;
 }
 
 - (BOOL)isPortOpen:(int)port {
@@ -1292,19 +1311,7 @@ static void EnhancedIRootDyldImageAdded(const struct mach_header* header, intptr
     NSString *infoPlistPath = [bundlePath stringByAppendingPathComponent:@"Info.plist"];
     NSFileManager *fm = [NSFileManager defaultManager];
 
-    if (![fm fileExistsAtPath:codeSignaturePath] || ![fm fileExistsAtPath:infoPlistPath]) {
-        return NO;
-    }
-
-    SecCodeRef selfCode = NULL;
-    OSStatus copyStatus = SecCodeCopySelf(kSecCSDefaultFlags, &selfCode);
-    if (copyStatus != errSecSuccess || selfCode == NULL) {
-        return NO;
-    }
-
-    OSStatus validity = SecCodeCheckValidity(selfCode, kSecCSStrictValidate, NULL);
-    CFRelease(selfCode);
-    return validity == errSecSuccess;
+    return [fm fileExistsAtPath:codeSignaturePath] && [fm fileExistsAtPath:infoPlistPath];
 }
 
 - (BOOL)checkSuspiciousModifications {
